@@ -1,3 +1,4 @@
+import { frameBuiltinRouter } from "./routes/frame_builtin";
 import cors from "cors";
 import dotenv from "dotenv";
 import express from "express";
@@ -161,6 +162,8 @@ app.use("/api", frameSleepRouter());
 app.use("/api", frameCommandRouter());
 app.use("/api", frameSettingsRouter());
 app.use("/api", miniProgramRouter);
+app.use("/api", frameBuiltinRouter);
+app.use("/static/builtin", express.static("static/builtin"));
 app.use("/api", photoRouter(uploadDir, mediaPublicBaseUrl));
 app.use("/api", settingsRouter);
 app.use("/api", notificationsRouter);
@@ -191,7 +194,7 @@ app.use((err: any, req: any, res: any, next: any) => {
   }
 });
 
-app.listen(port, () => {
+const server = app.listen(port, () => {
   console.log(`MyFrame API http://0.0.0.0:${port}`);
   startTransitCleanupJob();
   console.log(`Upload dir: ${uploadDir}`);
@@ -212,3 +215,6 @@ app.listen(port, () => {
   seedPushQueue();
   startFrameMqtt();
 });
+
+server.keepAliveTimeout = 65000;
+server.headersTimeout = 66000;

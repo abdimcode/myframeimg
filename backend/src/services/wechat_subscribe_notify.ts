@@ -320,7 +320,7 @@ export async function notifyPlaylistSent(opts: {
   await notifyPhotoUploaded({
     uploaderUserId: opts.uploaderUserId,
     frameName: opts.frameName,
-    photoName: opts.playlistTitle || "轮播列表",
+    photoName: (opts.playlistTitle || "Playlist") + " (" + opts.photoCount + ")",
   });
 }
 

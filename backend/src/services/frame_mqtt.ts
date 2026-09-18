@@ -773,9 +773,12 @@ function handleMessage(topic: string, raw: Buffer) {
         uptimeMs: 0,
         pendingQueue: [],
         nextDeliveryAtMs: null,
+        sleepConfig: { enabled: false, startTime: "23:00", endTime: "07:00", timezoneOffsetMinutes: 0 },
         ota: { targetVersion: null, status: "idle" },
       };
       draft.frames.push(match);
+      draft.wifiSleepByBleMac = draft.wifiSleepByBleMac || {};
+      draft.wifiSleepByBleMac[mac] = { mode: 0, begintime: "00:00", endtime: "00:00", updatedAtMs: Date.now() };
     }
     match.wifiStatus = "online";
     match.lastSeenAtMs = Date.now();
@@ -812,6 +815,11 @@ function handleMessage(topic: string, raw: Buffer) {
       if (Number.isFinite(tzOffset) && tzOffset >= -840 && tzOffset <= 840) match.timezoneOffsetMinutes = tzOffset;
       const fv = normalizeFirmwareVersion(String(d.version ?? d.ver ?? ""));
       if (fv && fv !== "0.0.0") match.firmwareVersion = fv;
+      if (action === "heart" || action === "login") {
+        if (d.screen_size != null && String(d.screen_size).trim()) match.screenSize = String(d.screen_size).trim();
+        if (d.orientation != null && Number.isFinite(Number(d.orientation))) match.orientation = Number(d.orientation);
+        if (d.fpga_ver != null && String(d.fpga_ver).trim()) match.fpgaVer = String(d.fpga_ver).trim();
+      }
       const fg = normalizeFirmwareVersion(String(d.fpga_ver ?? d.fpgaVersion ?? ""));
       if (fg && fg !== "0.0.0") match.fpgaVersion = fg;
       if (d.wifi_name && typeof d.wifi_name === "string") match.wifiSsid = d.wifi_name;
@@ -1037,9 +1045,10 @@ export function isDeviceSleeping(macRaw: string): boolean {
   const alive = lastSeen > 0 && now - lastSeen < HEARTBEAT_TIMEOUT_MS;
   if (!alive) return false;
 
+  if (pairedFrame?.sleepConfig?.enabled === false) return false;
   // Active wifi_sleep config first.
   const ws = data.wifiSleepByBleMac?.[normalizeMac(mac)];
-  if (ws && Number(ws.mode) !== 0 && ws.begintime && ws.endtime) {
+  if (ws && Number(ws.mode) > 0 && ws.begintime && ws.endtime) {
     return isTimeInWindow(
       new Date(),
       ws.begintime,

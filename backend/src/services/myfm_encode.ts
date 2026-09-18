@@ -44,24 +44,51 @@ const FS5 = 5 / 16;
 const FS1 = 1 / 16;
 
 /** Match Flutter `ImageProcessorService` XT pre-quantize (myframeapp). */
-const XT_CONTRAST = 1.28;
-const XT_SATURATION = 1.58;
-const XT_BRIGHTNESS = 1.04;
-const XT_SHARPNESS = 1.45;
+const XT_CONTRAST = 1.05;
+const XT_SATURATION = 1.12;
+const XT_BRIGHTNESS = 1.0;
+
 
 function clamp255(n: number): number {
   return n < 0 ? 0 : n > 255 ? 255 : n;
 }
 
+/** Hue in degrees (0..360) for an RGB triple. */
+function hueDeg(r: number, g: number, b: number): number {
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const d = max - min;
+  if (d === 0) return 0;
+  let h: number;
+  if (max === r) h = ((g - b) / d) % 6;
+  else if (max === g) h = (b - r) / d + 2;
+  else h = (r - g) / d + 4;
+  h *= 60;
+  if (h < 0) h += 360;
+  return h;
+}
+
 function nearestXtPaletteIndex(r: number, g: number, b: number): number {
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  const saturation = max > 0 ? (max - min) / max : 0;
+  const luminance = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+  // Human skin / peach hues (~15°–50°) must be allowed to dither with White +
+  // Red (+ sparse Yellow). Only force pixels away from White for genuinely
+  // vivid chromatic graphics, otherwise skin highlights collapse into Yellow.
+  const hue = hueDeg(r, g, b);
+  const isSkinToneRange = hue >= 15 && hue <= 50 && saturation < 0.50;
+
   let bestIdx = 0;
   let bestD = Number.POSITIVE_INFINITY;
-  for (let j = 0; j < XT_PALETTE.length; j++) {
+  for (let j = 0; j < XT_PALETTE.length; j += 1) {
     const [hw, pr, pg, pb] = XT_PALETTE[j];
     const dr = r - pr;
     const dg = g - pg;
     const db = b - pb;
-    const d = dr * dr + dg * dg + db * db;
+    if (hw === 1 && !isSkinToneRange && luminance > 0.65 && saturation > 0.45) {
+      continue; // vivid/saturated graphics only
+    }
+    const d = 2 * dr * dr + 4 * dg * dg + 3 * db * db;
     if (d < bestD) {
       bestD = d;
       bestIdx = hw;
@@ -340,7 +367,7 @@ export async function writeMyfmSidecar(uploadedAbsPath: string): Promise<string>
   pipeline = pipeline
     .modulate({ brightness: XT_BRIGHTNESS, saturation: XT_SATURATION })
     .linear(XT_CONTRAST, b)
-    .sharpen({ sigma: 1, m1: XT_SHARPNESS, m2: XT_SHARPNESS });
+    .sharpen({ sigma: 1, m1: 1.5, m2: 0.5 });
 
   const { data, info } = await pipeline.raw().toBuffer({ resolveWithObject: true });
 

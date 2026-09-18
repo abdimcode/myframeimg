@@ -141,13 +141,25 @@ export function frameCommandRouter(): Router {
         if (!draft.wifiSleepByBleMac) draft.wifiSleepByBleMac = {};
         // Persist the user's LOCAL wall-clock times + offset for client UI display
         // and sleep-window calculation. Firmware receives UTC (see publishFrameCommand).
-        draft.wifiSleepByBleMac[macKey] = {
+        const entry = {
           mode: Number(data.mode),
           begintime: localBegintime,
           endtime: localEndtime,
           timezoneOffsetMinutes,
           updatedAtMs: Date.now(),
         };
+        draft.wifiSleepByBleMac[macKey] = entry;
+        // Alias to the paired sibling MAC(s) so BLE/STA keys can never diverge.
+        const frame = draft.frames.find(
+          (f) =>
+            normalizeMacKey(f.id) === macKey ||
+            (!!f.bleMac && normalizeMacKey(f.bleMac) === macKey) ||
+            (!!f.stationMac && normalizeMacKey(f.stationMac) === macKey),
+        );
+        if (frame) {
+          if (frame.stationMac) draft.wifiSleepByBleMac[normalizeMacKey(frame.stationMac)] = entry;
+          if (frame.bleMac) draft.wifiSleepByBleMac[normalizeMacKey(frame.bleMac)] = entry;
+        }
       });
       recentRelaysByMac.set(macKey, { msgid, action, atMs: Date.now() });
     }

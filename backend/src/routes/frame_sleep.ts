@@ -78,6 +78,16 @@ export function frameSleepRouter(): Router {
     var startTime = String(body.startTime ?? "").trim();
     var endTime = String(body.endTime ?? "").trim();
     var timezoneOffsetMinutes = normalizeTzOffset(body.timezoneOffsetMinutes);
+    // Default the offset from the frame when the client omitted it (or sent 0),
+    // so a real timezone is never masked by a zero default.
+    if (!timezoneOffsetMinutes) {
+      var existingFrame = db.read().frames.find(function(f) {
+        return normalizeMacKey(f.id) === macKey || (!!f.bleMac && normalizeMacKey(f.bleMac) === macKey);
+      });
+      if (existingFrame && existingFrame.timezoneOffsetMinutes) {
+        timezoneOffsetMinutes = existingFrame.timezoneOffsetMinutes;
+      }
+    }
     if (!TIME_RE.test(startTime)) {
       res.status(422).json({ ok: false, error: "invalid_start_time", message: "Use HH:MM format" });
       return;

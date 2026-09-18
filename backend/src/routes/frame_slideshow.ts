@@ -1,3 +1,5 @@
+import { claimNotification } from "../services/notification_dedupe";
+import { sendLocalizedPushToFrameSubscribers } from "../services/firebase_admin";
 import crypto from "crypto";
 import { notifyPlaylistSent } from "../services/wechat_subscribe_notify";
 import express, { Request, Response, Router } from "express";
@@ -382,7 +384,13 @@ export function frameSlideshowRouter(uploadDir?: string): Router {
       console.warn("[slideshow] strategy_bin skipped (mqtt offline)", macKey);
     }
 
-    notifyPlaylistSent({ uploaderUserId: u?.userId, playlistTitle: "Playlist", photoCount: ids.length, frameName: macKey }).catch((e: unknown) => console.warn("[slideshow] notify error", e));
+    if (claimNotification("playlist:" + macKey + ":" + JSON.stringify(ids))) {
+      sendLocalizedPushToFrameSubscribers(macKey, (s) => ({
+        title: s.photoUploadedTitle,
+        body: ids.length + " photos added to playlist",
+      }), { alsoNotifyUserId: u?.userId, eventKey: "playlist:" + macKey + ":" + JSON.stringify(ids) });
+      notifyPlaylistSent({ uploaderUserId: u?.userId, playlistTitle: "Playlist", photoCount: ids.length, frameName: macKey }).catch((e: unknown) => console.warn("[slideshow] notify error", e));
+    }
     res.json({
       ok: true,
       macKey,

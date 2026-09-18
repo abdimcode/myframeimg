@@ -57,7 +57,7 @@ export function DevPortalApp() {
   }, [selectedApi]);
 
   return (
-    <div ref={rootRef} className="devs-portal min-h-screen bg-background text-foreground flex flex-col">
+    <div ref={rootRef} className="devs-portal h-screen overflow-hidden bg-background text-foreground flex flex-col">
       <header className="h-14 bg-card border-b border-border flex items-center px-4 flex-shrink-0 sticky top-0 z-40">
         <div className="flex items-center gap-1 sm:gap-3 flex-1 min-w-0">
           <button
@@ -168,12 +168,15 @@ export function DevPortalApp() {
         </aside>
 
         <div className="flex-1 flex flex-col min-w-0 min-h-0">
-          <DevLiveSnapshot />
-          <main className="flex-1 overflow-y-auto min-h-0">
+          {/* Upper dashboard (quick guide + live snapshot): confined to the top
+              half and independently scrollable so the console below always
+              keeps ~48vh. */}
+          <div className="flex-1 min-h-0 overflow-y-auto max-h-[52vh]">
+            <DevLiveSnapshot />
             <DevDescription />
-          </main>
+          </div>
           {debugMode && (
-            <div className="flex-shrink-0 border-t border-border">
+            <div className="flex-shrink-0 h-[48vh] min-h-[320px] border-t-2 border-[#3b2a1d]">
               <DevConsole />
             </div>
           )}

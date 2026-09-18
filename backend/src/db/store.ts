@@ -227,6 +227,9 @@ export type MyframeDb = {
     firmwareVersion: string;
     /** FPGA/panel firmware version reported by the device (`fpga_ver`). */
     fpgaVersion?: string;
+    screenSize?: string;
+    orientation?: number;
+    fpgaVer?: string;
     lastSeenAtMs: number | null;
     uptimeMs: number;
     pendingQueue: string[];

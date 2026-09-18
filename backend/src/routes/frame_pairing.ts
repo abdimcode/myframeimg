@@ -31,8 +31,9 @@ function isInSleepWindow(data: ReturnType<typeof db.read>, mac: string, paired: 
   countryCode?: string;
   sleepConfig?: { enabled: boolean; startTime: string; endTime: string; timezoneOffsetMinutes?: number };
 } | undefined): boolean {
+  if (paired?.sleepConfig?.enabled === false) return false;
   var ws = data.wifiSleepByBleMac?.[normalizeMac(mac)];
-  if (ws && Number(ws.mode) !== 0 && ws.begintime && ws.endtime) {
+  if (ws && Number(ws.mode) > 0 && ws.begintime && ws.endtime) {
     return isTimeInWindow(new Date(), ws.begintime, ws.endtime, ws.timezoneOffsetMinutes ?? paired?.timezoneOffsetMinutes ?? timezoneOffsetForCountry(paired?.countryCode) ?? DEFAULT_UTC_OFFSET_MINUTES);
   }
   if (paired?.sleepConfig?.enabled) {
@@ -113,6 +114,27 @@ function frameStatusPayload(macRaw: string) {
         ? paired.storageTotal
         : 32000;
 
+  // Resolve both STA and BLE keys so either alias works, then prefer the
+  // frame's persisted sleepConfig over the legacy wifiSleepByBleMac map.
+  var normMac = normalizeMac(mac);
+  var bleKey = paired?.bleMac ? normalizeMac(paired.bleMac) : normMac;
+  var staKey = paired?.stationMac ? normalizeMac(paired.stationMac) : normMac;
+  var wifiSleepEntry =
+    db.read().wifiSleepByBleMac?.[staKey] ??
+    db.read().wifiSleepByBleMac?.[bleKey] ??
+    db.read().wifiSleepByBleMac?.[normMac];
+  var sleepStartResolved = paired?.sleepConfig?.startTime ?? wifiSleepEntry?.begintime ?? null;
+  var sleepEndResolved = paired?.sleepConfig?.endTime ?? wifiSleepEntry?.endtime ?? null;
+  // Don't let a default 0 offset block the frame's real timezone.
+  var sleepTzResolved = paired?.sleepConfig?.timezoneOffsetMinutes;
+  if (sleepTzResolved === undefined || sleepTzResolved === null || sleepTzResolved === 0) {
+    sleepTzResolved =
+      paired?.timezoneOffsetMinutes ??
+      wifiSleepEntry?.timezoneOffsetMinutes ??
+      timezoneOffsetForCountry(paired?.countryCode) ??
+      0;
+  }
+
   return {
     ok: true,
     device_id: mac,
@@ -127,6 +149,9 @@ function frameStatusPayload(macRaw: string) {
     // True when the frame was provisioned via BluFi but hasn't heartbeated yet.
     // Clients should keep polling (not show error) during the provisioning window.
     provisioning: provisioning,
+    screen_size: paired?.screenSize ?? null,
+    orientation: paired?.orientation ?? null,
+    fpga_ver: paired?.fpgaVer ?? paired?.fpgaVersion ?? null,
     battery: liveBattery ?? 100,
     // Battery charging state reported live by the device (is_charging).
     is_charging: rec?.isCharging ?? paired?.isCharging ?? null,
@@ -157,9 +182,9 @@ function frameStatusPayload(macRaw: string) {
     // "Scheduled wake-up at …" subtext under the In-Sleep-Mode badge.
     // Resolve the sleep window directly (the `ws`/`paired` references are in
     // scope earlier in this function; recompute for the payload).
-    sleep_start: (db.read().wifiSleepByBleMac?.[normalizeMac(mac)]?.begintime) ?? paired?.sleepConfig?.startTime ?? null,
-    sleep_end: (db.read().wifiSleepByBleMac?.[normalizeMac(mac)]?.endtime) ?? paired?.sleepConfig?.endTime ?? null,
-    sleep_timezone_offset_minutes: (db.read().wifiSleepByBleMac?.[normalizeMac(mac)]?.timezoneOffsetMinutes) ?? paired?.sleepConfig?.timezoneOffsetMinutes ?? paired?.timezoneOffsetMinutes ?? timezoneOffsetForCountry(paired?.countryCode) ?? null,
+    sleep_start: sleepStartResolved,
+    sleep_end: sleepEndResolved,
+    sleep_timezone_offset_minutes: sleepTzResolved,
     country_code: paired?.countryCode ?? null,
     timezone: paired?.timezone ?? null,
     timezone_offset_minutes: paired?.timezoneOffsetMinutes ?? timezoneOffsetForCountry(paired?.countryCode) ?? null,

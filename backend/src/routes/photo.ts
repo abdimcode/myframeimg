@@ -1,3 +1,5 @@
+import { claimNotification } from "../services/notification_dedupe";
+import { convertFrameImage } from "../services/image_converter";
 import { incrementWechatMessageQuota, notifyPhotoUploaded } from "../services/wechat_subscribe_notify";
 import crypto from "crypto";
 import express, { Request, Response } from "express";
@@ -142,7 +144,7 @@ export function photoRouter(uploadDir: string, publicBaseUrl: string) {
         return;
       } else if (encodeMyfm && looksLikeRaster) {
         try {
-          mqttBasename = await writeMyfmSidecar(file.path);
+          mqttBasename = await convertFrameImage(file.path, deviceId);
           imageProcessing = "server_myfm_encode";
         } catch (err) {
           const detail = err instanceof Error ? err.message : String(err);
@@ -286,7 +288,7 @@ export function photoRouter(uploadDir: string, publicBaseUrl: string) {
       });
 
       // Playlist clients announce completion once after publishing the full batch.
-      if (!(source === "playlist" && String(req.body.silent ?? "") === "true")) {
+      if (source !== "playlist" && claimNotification("photo:" + (deviceId || db.read().device.id) + ":" + mqttBasename)) {
         // Quota banking: client reports a granted wx subscription on this upload.
         if (String(req.body.subscription_granted ?? "") === "true") {
           incrementWechatMessageQuota(verifyUserJwtBearer(req)?.userId);
@@ -300,7 +302,7 @@ export function photoRouter(uploadDir: string, publicBaseUrl: string) {
             title: s.photoUploadedTitle,
             body: s.photoUploadedBody(deviceId ?? ""),
           }),
-          { alsoNotifyUserId: uploaderId },
+          { alsoNotifyUserId: uploaderId, eventKey: "photo:" + devId + ":" + mqttBasename },
         );
         notifyPhotoUploaded({
           uploaderUserId: uploaderId,
@@ -407,7 +409,7 @@ export function photoRouter(uploadDir: string, publicBaseUrl: string) {
         return;
       } else if (encodeMyfm && looksLikeRaster) {
         try {
-          mqttBasename = await writeMyfmSidecar(file.path);
+          mqttBasename = await convertFrameImage(file.path, deviceId);
           imageProcessing = "server_myfm_encode";
         } catch (err) {
           const detail = err instanceof Error ? err.message : String(err);
@@ -549,7 +551,7 @@ export function photoRouter(uploadDir: string, publicBaseUrl: string) {
         });
       });
 
-      if (!(source === "playlist" && String(req.body.silent ?? "") === "true")) {
+      if (source !== "playlist" && claimNotification("photo:" + (deviceId || db.read().device.id) + ":" + mqttBasename)) {
         // Quota banking: client reports a granted wx subscription on this upload.
         if (String(req.body.subscription_granted ?? "") === "true") {
           incrementWechatMessageQuota(verifyUserJwtBearer(req)?.userId);
@@ -563,7 +565,7 @@ export function photoRouter(uploadDir: string, publicBaseUrl: string) {
             title: s.photoUploadedTitle,
             body: s.photoUploadedBody(deviceId ?? ""),
           }),
-          { alsoNotifyUserId: uploaderId },
+          { alsoNotifyUserId: uploaderId, eventKey: "photo:" + devId + ":" + mqttBasename },
         );
         notifyPhotoUploaded({
           uploaderUserId: uploaderId,

@@ -320,9 +320,12 @@ userProfileRouter.post("/v1/user/frames/bind", (req: Request, res: Response) => 
         uptimeMs: 0,
         pendingQueue: [],
         nextDeliveryAtMs: null,
+        sleepConfig: { enabled: false, startTime: "23:00", endTime: "07:00", timezoneOffsetMinutes: 0 },
         ota: { targetVersion: null, status: "idle" },
       });
       existing = draft.frames[draft.frames.length - 1];
+      draft.wifiSleepByBleMac = draft.wifiSleepByBleMac || {};
+      draft.wifiSleepByBleMac[norm] = { mode: 0, begintime: "00:00", endtime: "00:00", updatedAtMs: Date.now() };
       // Manual Bluetooth setup → co-owner (unlimited OWNERs).
       grantBluetoothCoOwner(draft, existing, user.userId);
     } else {

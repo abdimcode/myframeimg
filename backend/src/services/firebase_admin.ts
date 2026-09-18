@@ -1,3 +1,4 @@
+import { claimNotification } from "./notification_dedupe";
 import { initializeApp, applicationDefault, cert, App } from "firebase-admin/app";
 import { getMessaging } from "firebase-admin/messaging";
 import type { ServiceAccount } from "firebase-admin";
@@ -184,7 +185,7 @@ export function sendLocalizedPushToFrameSubscribers(
     const lang = getUserLanguage(uid);
     const strings = getPushStrings(lang);
     const { title, body } = buildStrings(strings);
-    sendPushToUser(uid, title, body).catch((e) =>
+    sendPushToUser(uid, title, body, opts.eventKey).catch((e) =>
       console.error(`[push] sendPushToUser ${uid} failed:`, e),
     );
   }
@@ -194,12 +195,14 @@ export async function sendPushToUser(
   userId: string,
   title: string,
   body: string,
+  eventKey?: string,
 ): Promise<void> {
   if (!userId || !isFirebaseConfigured()) return;
 
   const data = db.read();
   const user = data.users.find((u) => u.id === userId);
-  const tokens = user?.fcmTokens ?? [];
+  const tokens = [...new Set(user?.fcmTokens ?? [])].filter(token =>
+    !eventKey || claimNotification("fcm:" + token + ":" + eventKey));
   if (tokens.length === 0) {
     console.warn(`[push] user ${userId} has no fcmTokens`);
     return;
@@ -251,6 +254,7 @@ export async function sendPushToUser(
 export type FramePushOptions = {
   /** Always notify this user (e.g. the uploader), even if frame lookup fails. */
   alsoNotifyUserId?: string;
+  eventKey?: string;
   /** Optional exclusion (legacy). Prefer omitting so uploaders get notified. */
   excludeUserId?: string;
 };
@@ -303,7 +307,7 @@ export function sendPushToFrameSubscribers(
   );
 
   for (const uid of userIds) {
-    sendPushToUser(uid, title, body).catch((e) =>
+    sendPushToUser(uid, title, body, opts.eventKey).catch((e) =>
       console.error(`[push] sendPushToUser ${uid} failed:`, e),
     );
   }
