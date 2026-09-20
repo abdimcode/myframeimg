@@ -163,7 +163,7 @@ app.use("/api", frameCommandRouter());
 app.use("/api", frameSettingsRouter());
 app.use("/api", miniProgramRouter);
 app.use("/api", frameBuiltinRouter);
-app.use("/static/builtin", express.static("static/builtin"));
+app.use("/static/builtin", (req,res,next)=>{console.log("[builtin] bin fetch",req.path);next();}, express.static("static/builtin"));
 app.use("/api", photoRouter(uploadDir, mediaPublicBaseUrl));
 app.use("/api", settingsRouter);
 app.use("/api", notificationsRouter);

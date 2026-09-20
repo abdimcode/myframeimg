@@ -27,5 +27,5 @@ export async function publishBuiltInImages(mac:string) {
  const target=resolveMqttHardwareMac(mac);
  if(!target) throw new Error("frame_not_found");
  await builtInManifest(target); // Never publish an incomplete download manifest.
- return publishFrameCommand(target,"down_int_img",{host:"47.76.164.162",port:3001,path:"/api/frames/"+target+"/built-in-manifest"},String(Date.now()));
+ return publishFrameCommand(target,"down_int_img",{host:"47.76.164.162",port:3001,path:"/api/device/builtin-manifest?mac="+target},String(Date.now()));
 }
