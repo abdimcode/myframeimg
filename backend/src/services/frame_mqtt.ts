@@ -461,10 +461,15 @@ function findFrameRow(mac: string) {
 const COUNTRY_RETRY_MS = [5 * 60_000, 30 * 60_000, 6 * 60 * 60_000];
 const COUNTRY_DAILY_MS = 24 * 60 * 60_000;
 
-/** Accept the ack result codes the firmware may use for success. */
+/**
+ * Success codes per protocol V1.3 §4 status table: 100 (downlink received, no
+ * error), 106 (command added), 113 (execution successful); examples use 1 and
+ * the BLE convention is 0. 112 = command execution failed.
+ */
 export function isCountryAckSuccess(result: unknown, ackCountry: string, target: string): boolean {
   const n = Number(result);
-  if (n === 1 || n === 113 || n === 100 || n === 0) return true;
+  if (n === 112) return false;
+  if (n === 1 || n === 113 || n === 100 || n === 106 || n === 107 || n === 0) return true;
   if (typeof result === "string" && /^(ok|success)$/i.test(result)) return true;
   // No result field at all but the ack echoes the requested code.
   return (result === undefined || result === null) && !!ackCountry && ackCountry === target;

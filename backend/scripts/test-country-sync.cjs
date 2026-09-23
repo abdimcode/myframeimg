@@ -46,6 +46,14 @@ const tick = () => new Promise(r => setTimeout(r, 20));
   assert.equal(wifiCountry.resolveWifiCountryCode('kr'), 'KR');
   assert.equal(wifiCountry.resolveWifiCountryCode('01'), '01');
   assert.equal(wifiCountry.resolveWifiCountryCode(''), '01');
+  // V1.3 examples spell world-safe as "1" — equivalent to Espressif "01".
+  assert.equal(wifiCountry.normalizeReportedCountry('1'), '01');
+  assert.equal(wifiCountry.normalizeReportedCountry('01'), '01');
+  assert.equal(wifiCountry.normalizeReportedCountry('cn'), 'CN');
+  assert.equal(wifiCountry.normalizeReportedCountry('XYZ'), '');
+  assert.equal(mqtt.isCountryAckSuccess(113, '', '01'), true);
+  assert.equal(mqtt.isCountryAckSuccess(100, '', '01'), true);
+  assert.equal(mqtt.isCountryAckSuccess(112, '01', '01'), false, '112 = command execution failed');
   assert.equal(wifiCountry.targetWifiCountry({ geoCountryCode: 'US', geoCountryAtMs: Date.now(), countryCode: 'KR' }), 'US', 'fresh GeoIP wins');
   assert.equal(wifiCountry.targetWifiCountry({ geoCountryCode: 'US', geoCountryAtMs: Date.now() - 40 * 86400000, countryCode: 'KR' }), 'KR', 'stale GeoIP → locale');
   assert.equal(wifiCountry.targetWifiCountry({}), '', 'unknown → no target');
@@ -80,10 +88,12 @@ const tick = () => new Promise(r => setTimeout(r, 20));
   assert.equal(c.wifiCountrySync.ackedCode, '01');
   assert.equal(c.wifiCountryReported, '01');
 
-  // 5. Subsequent heartbeat reporting 01 → in sync, nothing sent.
+  // 5. Subsequent heartbeat reporting world-safe (firmware may say "1" or "01") → in sync, nothing sent.
   const before = messages.length;
+  heart(CRISTIANO, '1'); await tick();
   heart(CRISTIANO, '01'); await tick();
   assert.equal(messages.length, before);
+  assert.equal(c.wifiCountryReported, '01');
 
   // 6. Acked but the frame keeps reporting CN → at most one nudge per day.
   heart(CRISTIANO, 'CN'); await tick();

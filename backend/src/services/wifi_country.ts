@@ -23,10 +23,15 @@ export function resolveWifiCountryCode(isoCode: unknown): string {
   return ESP32_SUPPORTED_COUNTRIES.has(code) ? code : WIFI_WORLD_SAFE_CODE;
 }
 
-/** Normalize a reported/desired code for comparison ("" when absent). */
+/**
+ * Normalize a reported/desired code for comparison ("" when absent).
+ * Protocol V1.3 examples write world-safe mode as "1" (heartbeat and §2.16);
+ * Espressif spells it "01" — treat both as "01".
+ */
 export function normalizeReportedCountry(raw: unknown): string {
   const code = String(raw ?? "").trim().toUpperCase();
-  return /^(01|[A-Z]{2})$/.test(code) ? code : "";
+  if (code === "1" || code === "01" || code === "0") return WIFI_WORLD_SAFE_CODE;
+  return /^[A-Z]{2}$/.test(code) ? code : "";
 }
 
 /** Milliseconds a GeoIP result is trusted before the phone locale is preferred again. */
