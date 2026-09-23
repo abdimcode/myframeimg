@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import express, { Router } from 'express';
 import { db } from '../db/store';
 import { verifyUserJwtBearer } from '../services/app_user_jwt';
 import { visibleFramesForUser } from '../services/account_sync_state';
@@ -6,6 +6,12 @@ import { deviceSettings, settingsFrame, flushDeviceSettings } from '../services/
 export const deviceSettingsRouter = Router();
 const time = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 const integer = (v: unknown, min: number, max: number) => typeof v === 'number' && Number.isInteger(v) && v >= min && v <= max;
+/** Accept integers sent as numeric strings ("1", "60") from loosely typed clients. */
+const toInt = (v: unknown): unknown => (typeof v === 'string' && /^-?\d+$/.test(v.trim()) ? Number(v) : v);
+// Released Flutter builds (< ApiClient content-type fix) send the JSON body as
+// text/plain, which express.json() ignores → empty body → 422 on every save.
+// Parse text/plain here and JSON-decode it below so those clients keep working.
+deviceSettingsRouter.use('/device/:mac/settings', express.text({ type: 'text/plain', limit: '64kb' }));
 deviceSettingsRouter.use('/device/:mac/settings', (req, res, next) => {
   const user = verifyUserJwtBearer(req);
   if (!user) { res.status(401).json({ok:false,error:'unauthorized'}); return; }
@@ -21,13 +27,47 @@ deviceSettingsRouter.get('/device/:mac/settings', (req, res) => {
 });
 deviceSettingsRouter.put('/device/:mac/settings', async (req, res) => {
   const frame = settingsFrame(req.params.mac)!;
-  const body = req.body;
-  if (!body || typeof body !== 'object' || Array.isArray(body)) {res.status(422).json({ok:false,error:'invalid_settings'});return;}
-  const {sleepMode:s, playbackProfile:p, ota:o} = body;
-  const invalid = (s !== undefined && (!s || typeof s !== 'object' || typeof s.enabled !== 'boolean' || !integer(s.mode,0,2) || s.enabled !== (s.mode > 0) || !time.test(s.beginTime) || !time.test(s.endTime) || (s.timezoneOffsetMinutes !== undefined && !integer(s.timezoneOffsetMinutes,-840,840))))
-    || (p !== undefined && (!p || typeof p !== 'object' || !integer(p.intervalMinutes,1,1440) || !integer(p.strategy,1,2) || !integer(p.idle,0,1) || (p.durationHours !== undefined && !integer(p.durationHours,0,720))))
-    || (o !== undefined && (!o || typeof o.autoCheck !== 'boolean')) || (s === undefined && p === undefined && o === undefined);
-  if (invalid) { res.status(422).json({ok:false,error:'invalid_settings'}); return; }
+  let body = req.body;
+  if (typeof body === 'string') {
+    try { body = JSON.parse(body); } catch { body = null; }
+  }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    res.status(422).json({ok:false,error:'invalid_settings',message:'Body must be a JSON object with sleepMode, playbackProfile and/or ota.',
+      fields:[{field:'body',message:req.body === undefined || (typeof req.body === 'object' && req.body && Object.keys(req.body).length === 0)
+        ? 'Empty body — send Content-Type: application/json' : 'Not a JSON object'}]});
+    return;
+  }
+  const {sleepMode:s, ota:o} = body;
+  // Playback profile: coerce numeric strings, default idle (1 = stay awake) when omitted.
+  const p = body.playbackProfile !== undefined && body.playbackProfile && typeof body.playbackProfile === 'object'
+    ? {...body.playbackProfile, intervalMinutes: toInt(body.playbackProfile.intervalMinutes), strategy: toInt(body.playbackProfile.strategy),
+       idle: body.playbackProfile.idle === undefined ? 1 : toInt(body.playbackProfile.idle),
+       durationHours: body.playbackProfile.durationHours === undefined ? undefined : toInt(body.playbackProfile.durationHours)}
+    : body.playbackProfile;
+  const fields: Array<{field:string;message:string}> = [];
+  if (s !== undefined) {
+    if (!s || typeof s !== 'object') fields.push({field:'sleepMode',message:'Must be an object'});
+    else {
+      if (typeof s.enabled !== 'boolean') fields.push({field:'sleepMode.enabled',message:'Boolean required'});
+      if (!integer(s.mode,0,2)) fields.push({field:'sleepMode.mode',message:'0 (off), 1 (once) or 2 (daily)'});
+      else if (typeof s.enabled === 'boolean' && s.enabled !== (s.mode > 0)) fields.push({field:'sleepMode.mode',message:'enabled must match mode > 0'});
+      if (!time.test(s.beginTime)) fields.push({field:'sleepMode.beginTime',message:'HH:mm'});
+      if (!time.test(s.endTime)) fields.push({field:'sleepMode.endTime',message:'HH:mm'});
+      if (s.timezoneOffsetMinutes !== undefined && !integer(s.timezoneOffsetMinutes,-840,840)) fields.push({field:'sleepMode.timezoneOffsetMinutes',message:'-840..840'});
+    }
+  }
+  if (p !== undefined) {
+    if (!p || typeof p !== 'object') fields.push({field:'playbackProfile',message:'Must be an object'});
+    else {
+      if (!integer(p.intervalMinutes,1,1440)) fields.push({field:'playbackProfile.intervalMinutes',message:'Integer minutes 1..1440'});
+      if (!integer(p.strategy,1,2)) fields.push({field:'playbackProfile.strategy',message:'1 (sequential) or 2 (random)'});
+      if (!integer(p.idle,0,1)) fields.push({field:'playbackProfile.idle',message:'0 (sleep after play) or 1 (stay awake)'});
+      if (p.durationHours !== undefined && !integer(p.durationHours,0,720)) fields.push({field:'playbackProfile.durationHours',message:'Integer hours 0 (unlimited)..720'});
+    }
+  }
+  if (o !== undefined && (!o || typeof o.autoCheck !== 'boolean')) fields.push({field:'ota.autoCheck',message:'Boolean required'});
+  if (s === undefined && p === undefined && o === undefined) fields.push({field:'body',message:'Provide sleepMode, playbackProfile and/or ota'});
+  if (fields.length) { res.status(422).json({ok:false,error:'invalid_settings',message:fields.map(f => f.field + ': ' + f.message).join('; '),fields}); return; }
   db.mutate(draft => {
     const target = settingsFrame(frame.id,draft.frames)!;
     target.settingsRevision = (target.settingsRevision ?? 0) + 1;

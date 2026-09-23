@@ -1,5 +1,8 @@
-const fs=require('fs'),vm=require('vm'),assert=require('assert/strict'),express=require('/var/myframe/backend/node_modules/express');
-const base='/var/myframe/backend/settings-stage';
+const fs=require('fs'),vm=require('vm'),path=require('path'),assert=require('assert/strict');
+const root=path.resolve(__dirname,'..');
+const express=require(path.join(root,'node_modules','express'));
+// Compiled output dir: STAGE_DIR env, else ./dist (e.g. `tsc --outDir settings-stage && STAGE_DIR=settings-stage node scripts/test-device-settings.cjs`).
+const base=process.env.STAGE_DIR?path.resolve(process.env.STAGE_DIR):path.join(root,'dist');
 const now=Date.now();
 const state={frames:[
 {id:'D0CF13E0361A',stationMac:'D0CF13E0361A',bleMac:'D0CF13E03618',ownerUserId:'owner',lastHeartbeatAtMs:now,firmwareVersion:'0.0.3',sleepConfig:{enabled:false,startTime:'23:00',endTime:'07:00',timezoneOffsetMinutes:180}},
@@ -16,7 +19,7 @@ const route=moduleAt('routes/device_settings.js',{'express':express,'../db/store
 (async()=>{
  const app=express();app.use(express.json());app.use('/api',route.deviceSettingsRouter);
  const server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));const origin='http://127.0.0.1:'+server.address().port;
- async function req(mac,body,auth='owner'){const res=await fetch(origin+'/api/device/'+mac+'/settings',{method:body?'PUT':'GET',headers:{authorization:'Bearer '+auth,'content-type':'application/json'},body:body?JSON.stringify(body):undefined});return {status:res.status,data:await res.json()};}
+ async function req(mac,body,auth='owner',contentType='application/json'){const res=await fetch(origin+'/api/device/'+mac+'/settings',{method:body?'PUT':'GET',headers:{authorization:'Bearer '+auth,'content-type':contentType},body:body?JSON.stringify(body):undefined});return {status:res.status,data:await res.json()};}
  try {
  assert.equal((await req('D0CF13E03618',null,'')).status,401);
  assert.equal((await req('D0CF13E03618',null,'stranger')).status,403);
@@ -35,6 +38,19 @@ const route=moduleAt('routes/device_settings.js',{'express':express,'../db/store
  assert.equal(messages.length,before+1);assert.equal(messages.at(-1).topic,'/myframe/D0CF13F0161E');assert.equal(messages.at(-1).action,'strategy');assert.equal(messages.at(-1).data.idle,0);
  await service.flushDeviceSettings('D0CF13F0161E');assert.equal(messages.length,before+1);
  assert.equal((await req('D0CF13E03618')).data.ota.autoCheck,false);
- console.log('PASS: auth, validation, separate sleep/OTA/playback, exact MQTT topic/UTC payload, persisted offline replay without repeated dispatch');
+ // 422 carries field-level detail.
+ const bad=await req('D0CF13E03618',{playbackProfile:{intervalMinutes:0,strategy:3,idle:1}});
+ assert.equal(bad.status,422);assert.deepEqual(bad.data.fields.map(f=>f.field),['playbackProfile.intervalMinutes','playbackProfile.strategy']);
+ // Released Flutter builds send JSON as text/plain: must be accepted, not 422.
+ const messiBefore=JSON.stringify(state.frames[1].playbackConfig);
+ const plain=await req('D0CF13E03618',{playbackProfile:{intervalMinutes:1,strategy:1,idle:1,durationHours:6}},'owner','text/plain; charset=utf-8');
+ assert.equal(plain.status,200);assert.deepEqual(plain.data.playbackProfile,{intervalMinutes:1,strategy:1,idle:1,durationHours:6});
+ assert.equal(JSON.stringify(state.frames[0].playbackConfig),JSON.stringify({intervalMinutes:1,mode:'sequential',idle:1,durationHours:6}));
+ assert.equal(JSON.stringify(state.frames[1].playbackConfig),messiBefore,'Messi profile untouched by Cristiano save');
+ // Numeric strings and omitted idle are coerced/defaulted.
+ const coerced=await req('D0CF13E03618',{playbackProfile:{intervalMinutes:'60',strategy:'2',durationHours:'0'}});
+ assert.equal(coerced.status,200);assert.deepEqual(coerced.data.playbackProfile,{intervalMinutes:60,strategy:2,idle:1,durationHours:0});
+ assert.equal(messages.at(-1).action,'strategy');assert.equal(messages.at(-1).topic,'/myframe/D0CF13E0361A');assert.deepEqual([messages.at(-1).data.intervalminutes,messages.at(-1).data.strategy],[60,2]);
+ console.log('PASS: auth, validation (+fields), text/plain JSON body, numeric-string coercion, separate sleep/OTA/playback per frame, exact MQTT topic/UTC payload, persisted offline replay without repeated dispatch');
  } finally {server.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});
