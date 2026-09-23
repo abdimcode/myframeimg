@@ -1,4 +1,6 @@
 import { classifyFramePresence } from "../services/frame_mqtt";
+import { countryForRequest } from "../services/geo_lookup";
+import { normalizeReportedCountry, targetWifiCountry } from "../services/wifi_country";
 import express from "express";
 import { Router, Request, Response } from "express";
 import multer from "multer";
@@ -301,6 +303,8 @@ userProfileRouter.post("/v1/user/frames/bind", (req: Request, res: Response) => 
   const validTimezoneOffset = Number.isFinite(timezoneOffsetIn) && timezoneOffsetIn >= -840 && timezoneOffsetIn <= 840
     ? timezoneOffsetIn
     : null;
+  // ESP32 Wi-Fi country the app pushed over BLE (`wifi_set_country_code`).
+  const wifiCountryIn = normalizeReportedCountry(req.body?.wifi_country_code ?? req.body?.wifiCountryCode);
   let frameId = "";
   let bleMacOut = norm;
 
@@ -353,6 +357,7 @@ userProfileRouter.post("/v1/user/frames/bind", (req: Request, res: Response) => 
     if (validCountryCode) existing!.countryCode = validCountryCode;
     if (timezoneIn) existing!.timezone = timezoneIn;
     if (validTimezoneOffset != null) existing!.timezoneOffsetMinutes = validTimezoneOffset;
+    if (wifiCountryIn) existing!.wifiCountryProvisioned = wifiCountryIn;
 
     frameId = existing!.id;
     bleMacOut = normalizeMac(existing!.bleMac || norm);
@@ -382,6 +387,10 @@ userProfileRouter.post("/v1/user/frames/bind", (req: Request, res: Response) => 
   // accepted immediately after the device is paired again.
   for (const key of relatedMacKeys(bleMacOut)) clearUnboundFrame(key);
 
+  // Physical location of the owner's phone (GeoIP of this request) drives the
+  // frame's Wi-Fi regulatory country sync over MQTT. Non-blocking; country only.
+  void recordFrameGeoCountry(req, frameId);
+
   const account = db.read().users.find((u) => u.id === user.userId);
   res.json({
     ok: true,
@@ -389,8 +398,30 @@ userProfileRouter.post("/v1/user/frames/bind", (req: Request, res: Response) => 
     ble_mac: bleMacOut,
     sync_version: account?.syncVersion ?? 0,
     primary_frame_id: account?.primaryFrameId ?? null,
+    wifi_country_target: targetWifiCountry({
+      geoCountryCode: undefined,
+      countryCode: validCountryCode || db.read().frames.find((f) => f.id === frameId)?.countryCode,
+    }) || null,
   });
 });
+
+/** Resolve the request's country and persist it on the frame (fire-and-forget). */
+export async function recordFrameGeoCountry(req: Request, frameId: string): Promise<string> {
+  try {
+    const cc = await countryForRequest(req);
+    if (!cc) return "";
+    db.mutate((draft) => {
+      const f = draft.frames.find((x) => x.id === frameId);
+      if (!f) return;
+      f.geoCountryCode = cc;
+      f.geoCountryAtMs = Date.now();
+    });
+    return cc;
+  } catch (e) {
+    console.warn("[user-profile] geo country lookup failed", e);
+    return "";
+  }
+}
 
 /** Remove a frame and every persisted reference so it can never rehydrate. */
 function permanentlyDeleteFrame(draft: MyframeDb, frameId: string): Set<string> {

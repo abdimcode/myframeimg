@@ -298,6 +298,23 @@ export type MyframeDb = {
     countryCode?: string;
     timezone?: string;
     timezoneOffsetMinutes?: number;
+    /** ISO country of the owner's app resolved by GeoIP at bind/poll time (no IP stored). */
+    geoCountryCode?: string;
+    geoCountryAtMs?: number;
+    /** ESP32 Wi-Fi country the app pushed over BLE (`wifi_set_country_code`) during provisioning. */
+    wifiCountryProvisioned?: string;
+    /** Wi-Fi regulatory country the frame last reported in a heartbeat ("CN", "01", …). */
+    wifiCountryReported?: string;
+    /** Server → frame `country` command state (MQTT, protocol §2.16). */
+    wifiCountrySync?: {
+      target: string;
+      msgid?: string;
+      attempts: number;
+      sentAtMs?: number;
+      ackedAtMs?: number;
+      ackedCode?: string;
+      ackResult?: number | string;
+    };
     /** Last firmware uplink ACK progress (strategy_bin_ack / download_complete / refresh_complete / strategy_stop_ack). */
     deliveryProgress?: {
       status:

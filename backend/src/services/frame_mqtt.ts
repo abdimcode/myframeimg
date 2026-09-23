@@ -11,6 +11,7 @@ import path from "path";
 import { db } from "../db/store";
 import { appendFrameLog } from "./frame_logs";
 import { handleDownloadComplete, handlePlayAck, handlePlaylistRenderAck, touchActivePlaylist } from "./push_queue";
+import { normalizeReportedCountry, targetWifiCountry } from "./wifi_country";
 
 /**
  * Frame firmware (0.5.x) emits MQTT `heart` about every ~10 minutes and often
@@ -423,32 +424,139 @@ function isStalePreStopAck(mac: string, ackMsgidRaw: unknown): boolean {
   return a < s;
 }
 
+/** Timezone sync (legacy `update_config`). Country is handled by [maybeSyncWifiCountry]. */
 function maybeSyncFrameLocale(mac: string, data: Record<string, unknown>): void {
-  const reported = String(data.country_code ?? data.countryCode ?? "").trim().toUpperCase();
   const timezone = String(data.timezone ?? data.timeZone ?? "").trim();
   const offsetRaw = Number(data.timezone_offset_minutes ?? data.timezoneOffsetMinutes);
   const offset = Number.isFinite(offsetRaw) && offsetRaw >= -840 && offsetRaw <= 840 ? offsetRaw : undefined;
-  if (!reported && !timezone && offset == null) return;
+  if (!timezone && offset == null) return;
   const now = Date.now();
-  const frame = db.read().frames.find((f) => {
-    const ids = [f.id, f.bleMac, f.stationMac ?? ""];
-    return ids.some((id) => id && (normalizeMac(id) === mac || resolveMqttHardwareMac(id) === mac));
-  });
-  const desiredCountry = frame?.countryCode?.trim().toUpperCase();
+  const frame = findFrameRow(mac);
   const desiredOffset = frame?.timezoneOffsetMinutes;
-  const countryMismatch = !!desiredCountry && !!reported && desiredCountry !== reported;
   const offsetMismatch = desiredOffset != null && offset != null && desiredOffset !== offset;
-  if ((countryMismatch || offsetMismatch) && now - (localeSyncAt.get(mac) ?? 0) > 5 * 60 * 1000) {
+  if (offsetMismatch && now - (localeSyncAt.get(mac) ?? 0) > 5 * 60 * 1000) {
     localeSyncAt.set(mac, now);
     publishJson(`/myframe/${mac}`, {
       action: "update_config",
       msgid: now.toString(),
       stamac: mac,
-      country_code: desiredCountry,
       timezone: frame?.timezone,
       timezone_offset_minutes: desiredOffset,
     }).catch(() => {});
   }
+}
+
+function findFrameRow(mac: string) {
+  return db.read().frames.find((f) => {
+    const ids = [f.id, f.bleMac, f.stationMac ?? ""];
+    return ids.some((id) => id && (normalizeMac(id) === mac || resolveMqttHardwareMac(id) === mac));
+  });
+}
+
+/**
+ * Retry schedule for the `country` command while no `country_ack` arrives:
+ * 5 min → 30 min → 6 h → daily. After a successful ack, a frame that still
+ * reports the factory code is re-sent at most once a day (and logged).
+ */
+const COUNTRY_RETRY_MS = [5 * 60_000, 30 * 60_000, 6 * 60 * 60_000];
+const COUNTRY_DAILY_MS = 24 * 60 * 60_000;
+
+/** Accept the ack result codes the firmware may use for success. */
+export function isCountryAckSuccess(result: unknown, ackCountry: string, target: string): boolean {
+  const n = Number(result);
+  if (n === 1 || n === 113 || n === 100 || n === 0) return true;
+  if (typeof result === "string" && /^(ok|success)$/i.test(result)) return true;
+  // No result field at all but the ack echoes the requested code.
+  return (result === undefined || result === null) && !!ackCountry && ackCountry === target;
+}
+
+/**
+ * Wi-Fi regulatory country auto-sync (protocol §2.16).
+ *
+ * Factory firmware reports `country_code: "CN"` everywhere. On each
+ * heart/login compare the reported code with the target derived from the
+ * owner's location (GeoIP at bind/poll → phone locale at bind), mapped to a
+ * code the ESP32 accepts (unsupported countries → "01" world-safe). On a
+ * mismatch publish `{action:"country", msgid, stamac, data:{country_code}}`
+ * to `/myframe/{mac}` with persisted backoff; `country_ack` finalizes it.
+ */
+function maybeSyncWifiCountry(mac: string, action: string, data: Record<string, unknown>, d: Record<string, unknown> | undefined): void {
+  if (action !== "heart" && action !== "login") return;
+  const reported = normalizeReportedCountry(data.country_code ?? data.countryCode ?? d?.country_code ?? d?.countryCode);
+  if (!reported) return;
+  const frame = findFrameRow(mac);
+  if (!frame) return;
+  const target = targetWifiCountry(frame);
+  const now = Date.now();
+
+  if (frame.wifiCountryReported !== reported) {
+    db.mutate((draft) => {
+      const f = draft.frames.find((x) => x.id === frame.id);
+      if (f) f.wifiCountryReported = reported;
+    });
+  }
+  if (!target || reported === target) {
+    // In sync (or nothing known): clear a stale in-flight command for the same target.
+    if (frame.wifiCountrySync && frame.wifiCountrySync.target === target && !frame.wifiCountrySync.ackedAtMs && reported === target) {
+      db.mutate((draft) => {
+        const f = draft.frames.find((x) => x.id === frame.id);
+        if (f?.wifiCountrySync) f.wifiCountrySync = { ...f.wifiCountrySync, ackedAtMs: now, ackedCode: reported, ackResult: "reported" };
+      });
+    }
+    return;
+  }
+
+  const sync = frame.wifiCountrySync?.target === target ? frame.wifiCountrySync : undefined;
+  const attempts = sync?.attempts ?? 0;
+  const lastSent = sync?.sentAtMs ?? 0;
+  const wait = sync?.ackedAtMs
+    ? COUNTRY_DAILY_MS // acked but the frame still reports the old code — nudge daily
+    : (COUNTRY_RETRY_MS[Math.min(attempts, COUNTRY_RETRY_MS.length) - 1] ?? (attempts === 0 ? 0 : COUNTRY_DAILY_MS));
+  if (attempts > 0 && now - lastSent < wait) return;
+  if (!isMqttConnected()) return;
+
+  const msgid = now.toString();
+  db.mutate((draft) => {
+    const f = draft.frames.find((x) => x.id === frame.id);
+    if (!f) return;
+    f.wifiCountrySync = {
+      target,
+      msgid,
+      attempts: attempts + 1,
+      sentAtMs: now,
+      ackedAtMs: sync?.ackedAtMs,
+      ackedCode: sync?.ackedCode,
+      ackResult: sync?.ackResult,
+    };
+  });
+  if (sync?.ackedAtMs) {
+    console.warn("[frame-mqtt] country: frame %s acked %s but still reports %s — re-sending (daily)", mac, target, reported);
+  } else {
+    console.log("[frame-mqtt] country: mac=%s reported=%s target=%s attempt=%d msgid=%s", mac, reported, target, attempts + 1, msgid);
+  }
+  publishFrameCommand(mac, "country", { country_code: target }, msgid).catch((e) => {
+    console.warn("[frame-mqtt] country publish failed mac=%s", mac, e);
+  });
+}
+
+/** `country_ack` uplink → persist success on the frame row. */
+function handleCountryAck(mac: string, data: Record<string, unknown>, d: Record<string, unknown> | undefined, result: unknown): void {
+  const frame = findFrameRow(mac);
+  if (!frame) return;
+  const ackCountry = normalizeReportedCountry(d?.country_code ?? d?.country ?? data.country_code);
+  const ackMsgid = String(data.ack_msgid ?? d?.ack_msgid ?? data.msgid ?? "").trim();
+  const target = frame.wifiCountrySync?.target ?? ackCountry;
+  const ok = isCountryAckSuccess(result, ackCountry, target);
+  console.log("[frame-mqtt] country_ack mac=%s result=%s country=%s msgid=%s ok=%s", mac, String(result), ackCountry || "-", ackMsgid || "-", ok);
+  db.mutate((draft) => {
+    const f = draft.frames.find((x) => x.id === frame.id);
+    if (!f) return;
+    const prev = f.wifiCountrySync ?? { target, attempts: 0 };
+    f.wifiCountrySync = ok
+      ? { ...prev, target: prev.target || target, ackedAtMs: Date.now(), ackedCode: ackCountry || prev.target, ackResult: result as number | string }
+      : { ...prev, ackResult: result as number | string };
+    if (ok && ackCountry) f.wifiCountryReported = ackCountry;
+  });
 }
 
 function handleMessage(topic: string, raw: Buffer) {
@@ -790,11 +898,10 @@ function handleMessage(topic: string, raw: Buffer) {
           freeMb: Number.isFinite(freeMb) && freeMb >= 0 ? freeMb : undefined,
         };
       }
-      const cc = String(data.country_code ?? data.countryCode ?? "").trim().toUpperCase();
-      // Client provisioning is authoritative for country. Heartbeats can carry
-      // stale/default firmware values (e.g. CN on hardware operating in KR), so
-      // only seed the field from telemetry when no client locale is persisted.
-      if (/^[A-Z]{2}$/.test(cc) && !match.countryCode) match.countryCode = cc;
+      // `countryCode` is the OWNER's locale (bind route) and drives the Wi-Fi
+      // country target. Heartbeats carry the factory default ("CN" everywhere),
+      // so they must never seed it; the reported value is tracked separately in
+      // `wifiCountryReported` by maybeSyncWifiCountry.
       const tz = String(data.timezone ?? data.timeZone ?? "").trim();
       if (tz) match.timezone = tz;
       const tzOffset = Number(data.timezone_offset_minutes ?? data.timezoneOffsetMinutes);
@@ -813,6 +920,7 @@ function handleMessage(topic: string, raw: Buffer) {
   });
 
   maybeSyncFrameLocale(mac, data);
+  maybeSyncWifiCountry(mac, action, data, d as Record<string, unknown> | undefined);
   if (action === "heart" || action === "login") {
     void import("./device_settings").then(m => m.flushDeviceSettings(mac))
       .catch(() => { /* persisted settings remain pending for next uplink */ });
@@ -824,6 +932,10 @@ function handleMessage(topic: string, raw: Buffer) {
   }
 
   switch (action) {
+    case "country_ack": {
+      handleCountryAck(mac, data, d as Record<string, unknown> | undefined, result);
+      break;
+    }
     case "login": {
       rec.config = {
         firmwareVersion: d?.ver,

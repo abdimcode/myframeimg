@@ -11,7 +11,8 @@ const state={frames:[
 const db={read:()=>state,mutate:fn=>fn(state)};
 function moduleAt(file,deps,extra='') {const box={exports:{},require:n=>n in deps?deps[n]:require(n),console,process,Buffer,setTimeout,clearTimeout,setInterval,clearInterval};vm.runInNewContext(fs.readFileSync(base+'/'+file,'utf8')+extra,box);return box.exports;}
 const noop=()=>{};
-const mqtt=moduleAt('services/frame_mqtt.js',{'../db/store':{db},mqtt:{},'../data/firmware_releases':{normalizeFirmwareVersion:v=>v},'./frame_logs':{appendFrameLog:noop},'./push_queue':{}},'\nexports.attach=c=>mqttClient=c;');
+const wifiCountry=moduleAt('services/wifi_country.js',{});
+const mqtt=moduleAt('services/frame_mqtt.js',{'../db/store':{db},mqtt:{},'./wifi_country':wifiCountry,'../data/firmware_releases':{normalizeFirmwareVersion:v=>v},'./frame_logs':{appendFrameLog:noop},'./push_queue':{}},'\nexports.attach=c=>mqttClient=c;');
 const messages=[];
 mqtt.attach({connected:true,publish:(topic,payload,opts,cb)=>{messages.push({topic,...JSON.parse(payload)});cb();}});
 const service=moduleAt('services/device_settings.js',{'../db/store':{db},'./frame_mqtt':mqtt});

@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Router, type Request } from "express";
 import { db } from "../db/store";
 import { requirePairingToken } from "../middleware/security";
 import { verifyUserJwtBearer } from "../services/app_user_jwt";
@@ -17,6 +17,27 @@ import {
   resolveMqttHardwareMac,
 } from "../services/frame_mqtt";
 import { offlineQueueDepth } from "../services/offline_queue";
+import { targetWifiCountry } from "../services/wifi_country";
+import { countryForRequest } from "../services/geo_lookup";
+
+const GEO_REFRESH_MS = 24 * 60 * 60 * 1000;
+const geoRefreshInflight = new Set<string>();
+/** Refresh frames[].geoCountryCode from the polling app's IP at most daily. Never blocks the response. */
+function refreshGeoCountryIfStale(req: Request, macRaw: string): void {
+  const mac = resolveMqttHardwareMac(macRaw) ?? normalizeMac(macRaw);
+  if (!mac || geoRefreshInflight.has(mac)) return;
+  const row = db.read().frames.find((f) => normalizeMac(f.stationMac ?? "") === mac || normalizeMac(f.id) === mac || normalizeMac(f.bleMac) === mac);
+  if (!row) return;
+  if (row.geoCountryAtMs && Date.now() - row.geoCountryAtMs < GEO_REFRESH_MS) return;
+  geoRefreshInflight.add(mac);
+  void countryForRequest(req).then((cc) => {
+    if (!cc) return;
+    db.mutate((draft) => {
+      const f = draft.frames.find((x) => x.id === row.id);
+      if (f) { f.geoCountryCode = cc; f.geoCountryAtMs = Date.now(); }
+    });
+  }).catch(() => {}).finally(() => geoRefreshInflight.delete(mac));
+}
 
 export const framePairingRouter = Router();
 
@@ -191,6 +212,13 @@ function frameStatusPayload(macRaw: string) {
     country_code: paired?.countryCode ?? null,
     timezone: paired?.timezone ?? null,
     timezone_offset_minutes: paired?.timezoneOffsetMinutes ?? timezoneOffsetForCountry(paired?.countryCode) ?? null,
+    // Wi-Fi regulatory country sync (MQTT `country`, protocol §2.16).
+    wifi_country_reported: paired?.wifiCountryReported ?? null,
+    wifi_country_target: paired ? (targetWifiCountry(paired) || null) : null,
+    wifi_country_geo: paired?.geoCountryCode ?? null,
+    wifi_country_provisioned: paired?.wifiCountryProvisioned ?? null,
+    wifi_country_synced: !!paired && !!paired.wifiCountryReported && paired.wifiCountryReported === (targetWifiCountry(paired) || paired.wifiCountryReported),
+    wifi_country_sync: paired?.wifiCountrySync ?? null,
     result: rec?.lastResult ?? null,
     lastResult: rec?.lastResult ?? null,
     displayCode: rec?.lastResult ?? null,
@@ -217,6 +245,8 @@ function frameStatusPayload(macRaw: string) {
 
 framePairingRouter.get("/frames/:mac/status", function(req, res) {
   var payload = frameStatusPayload(String(req.params.mac ?? ""));
+  // Throttled GeoIP refresh from the owner's app poll (once per 24h per frame).
+  refreshGeoCountryIfStale(req, String(req.params.mac ?? ""));
   if (!payload.ok) {
     res.status(400).json(payload);
     return;

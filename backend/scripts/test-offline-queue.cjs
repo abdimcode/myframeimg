@@ -36,8 +36,9 @@ const messages = [];
 const fcm = [];
 const appNotes = [];
 
+const wifiCountry = moduleAt('services/wifi_country.js', {});
 const mqtt = moduleAt('services/frame_mqtt.js', {
-  '../db/store': { db }, mqtt: {},
+  '../db/store': { db }, mqtt: {}, './wifi_country': wifiCountry,
   '../data/firmware_releases': { normalizeFirmwareVersion: v => v },
   './frame_logs': { appendFrameLog: noop },
   './push_queue': pushQueueRef,
