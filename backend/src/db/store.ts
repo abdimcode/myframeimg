@@ -231,6 +231,8 @@ export type MyframeDb = {
     orientation?: number;
     fpgaVer?: string;
     lastSeenAtMs: number | null;
+    /** Last device uplink; upload requests must not refresh presence. */
+    lastHeartbeatAtMs?: number;
     uptimeMs: number;
     pendingQueue: string[];
     nextDeliveryAtMs: number | null;
@@ -241,7 +243,9 @@ export type MyframeDb = {
     /** Last reported OTA progress (0–100) or status string from the device. */
     lastOtaProgress?: number | string | null;
     sleepConfig?: { enabled: boolean; startTime: string; endTime: string; timezoneOffsetMinutes?: number };
-    playbackConfig?: { intervalMinutes: number; mode: "sequential" | "random"; durationHours: number };
+    settingsRevision?: number;
+    settingsPending?: { sleep?: number; playback?: number };
+    playbackConfig?: { idle?: number; intervalMinutes: number; mode: "sequential" | "random"; durationHours: number };
     playbackConfigUpdatedAtMs?: number;
     stationMac?: string;
     battery?: number;

@@ -1,128 +1,72 @@
-/* MyFrame Flasher — light brand shell
- * Palette: vermillion (#C83838), ink black (#1A1A1A), rice paper (#F7F5F0)
- * Typography: Cormorant Garamond + Noto Serif SC (title), system sans (body)
- */
+/* MyFrame brand guidelines, September 2026. Scoped to the production page. */
+@font-face{font-family:Inter;font-style:normal;font-weight:400;font-display:swap;src:url('./inter-regular.ttf') format('truetype')}
+@font-face{font-family:Inter;font-style:normal;font-weight:600;font-display:swap;src:url('./inter-semibold.ttf') format('truetype')}
 
-/* Typography — English serif upgraded from Cormorant Garamond (display,
- * too thin at 14-18 px UI sizes) to Fraunces + Newsreader, the same style
- * family Anthropic uses on claude.ai / anthropic.com. Both are variable,
- * humanist, and stay legible from caption to hero without ever feeling
- * "display-only". Chinese pairing stays Noto Serif SC per brand §08.
- *
- *   Fraunces      — headings + hero (opsz + wght variable, warm modern serif)
- *   Newsreader    — body copy + labels (readable at 12-18 px, tight metrics)
- *   Noto Serif SC — Chinese runs at every tier
- */
-@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600&family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600;6..72,700&family=Noto+Serif+SC:wght@300;400;500;600;700;900&display=swap');
+
+
+500;600&family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600;6..72,700&family=Noto+Serif+SC:wght@300;400;500;600;700;900&display=swap');
 
 :root {
-  /* MyFrame 12-color palette per docs/M2/M2-品牌手册-v1.0.html §07.
-   * To-B / production tool uses the ON INK 900 · MY WHITE + FRAME 朱砂
-   * combination: black-dominant, MY WHITE for text, 朱砂 for the one CTA
-   * that matters per screen. Everything else stays inside the palette
-   * (no ad-hoc greys, no new hues).
-   *
-   * ① Paper       ---------------------------------------------------------
-   *   Paper 100   #F5F1E8  brand assets / packaging / iOS cards
-   *   Paper 200   #FAF7F0  wide whitespace · Web bg (MY WHITE)
-   *   Paper 300   #EFE8DC  dividers / borders
-   * ② Ink         ---------------------------------------------------------
-   *   Ink 900     #1A1A1A  primary text · MY colour
-   *   Ink 700     #5C5750  secondary text
-   *   Ink 500     #8A857C  muted / timestamps
-   * ③ Cinnabar    (core brand colour, use sparingly — max 2 per screen) ---
-   *   App         #C83838  App LCD · FRAME · CTA · seal
-   *   Frame       #B71C1C  e-paper 6-colour
-   *   Amber       #B86E3C  warm accent
-   * ④ Honey + status --------------------------------------------------------
-   *   Honey       #C49A2D  gentle emphasis
-   *   Success     #5A7F3E  moss green
-   *   Danger      #8E2A1F  deep 朱
-   */
+  
 
-  /* ── Palette tokens (never used outside this file) ── */
+  
   --paper-100: #F5F1E8;  --paper-200: #FAF7F0;  --paper-300: #EFE8DC;
   --ink-900:   #1A1A1A;  --ink-700:   #5C5750;  --ink-500:   #8A857C;
   --cinnabar-app:   #C83838;  --cinnabar-frame: #B71C1C;  --amber-500:  #B86E3C;
   --honey-500: #C49A2D;  --success-green: #5A7F3E;  --danger-deep: #8E2A1F;
 
-  /* ── Role tokens (what the rest of the CSS actually uses) ──
-   * Paper-first classical layout — 米纸底 打底, 朱砂克制.
-   * Strict adherence to §07: any hex outside the 12-color palette is a bug.
-   */
-  /* Paper 200 as page bg per manual §07 "大面积留白 · Web 背景" — cleaner,
-   * more modern, this is the Web-spec official value. White cards float on
-   * it; Paper 100 shows through as subtle warmth on hero band / insets. */
-  --bg:              var(--paper-200);            /* MY WHITE · Web bg */
-  --bg-elevated:     #FFFFFF;                     /* white cards */
-  --bg-inset:        var(--paper-100);            /* warmer inset (hints, log wrap) */
+  
+  
+  --bg:              var(--paper-200);            
+  --bg-elevated:     #FFFFFF;                     
+  --bg-inset:        var(--paper-100);            
 
-  --text-primary:    var(--ink-900);              /* main copy */
-  --text-muted:      var(--ink-500);              /* Ink 500 · muted */
-  --text-secondary:  var(--ink-700);              /* Ink 700 · subtitles */
+  --text-primary:    var(--ink-900);              
+  --text-muted:      var(--ink-500);              
+  --text-secondary:  var(--ink-700);              
 
-  --line:            var(--paper-300);            /* dividers / borders */
-  --line-strong:     var(--paper-300);                     /* stronger card border (still Paper family) */
+  --line:            var(--paper-300);            
+  --line-strong:     var(--paper-300);                     
 
-  --vermillion:      var(--cinnabar-app);         /* CTA / FRAME accent */
+  --vermillion:      var(--cinnabar-app);         
   --vermillion-hover: var(--cinnabar-frame);
 
   --success:         var(--success-green);
   --warn:            var(--honey-500);
   --error:           var(--danger-deep);
 
-  /* Status tint tokens — brand-legal: 半透明 Cinnabar / Honey / Success on
-   * paper. Replaces the previous ad-hoc pale pastels that were leaking
-   * outside §07. Alpha kept low so 米纸底 shows through. */
-  --tint-error:      rgba(200, 56, 56, 0.10);        /* Cinnabar App @ 10% */
-  --tint-warn:       rgba(196, 154, 45, 0.12);       /* Honey @ 12% */
-  --tint-success:    rgba(90, 127, 62, 0.10);        /* Moss Green @ 10% */
-  --tint-ink-deep:   var(--ink-900);                 /* log bg now uses Ink 900 (was a rogue near-black) */
+  
+  --tint-error:      rgba(200, 56, 56, 0.10);        
+  --tint-warn:       rgba(196, 154, 45, 0.12);       
+  --tint-success:    rgba(90, 127, 62, 0.10);        
+  --tint-ink-deep:   var(--ink-900);                 
 
-  /* Legacy aliases (kept so older rules keep compiling — same values). */
+  
   --ink:             var(--text-primary);
   --paper:           var(--bg-elevated);
   --rice:            var(--bg);
   --muted:           var(--text-muted);
-  /* Brand manual §08 Typography (docs/M2/M2-品牌手册-v1.0.html):
-   *   English primary : Cormorant Garamond → EB Garamond → Garamond
-   *                     → Times New Roman → Songti SC → serif
-   *   Chinese primary : Noto Serif SC → 思源宋体 → 宋体 → STSong → serif
-   *   All-serif everywhere · never mix sans in one artefact.
-   *   ❌ PingFang / Inter / Optima
-   *
-   * Font-size ladder — three tiers only (per manual "不搞 5-6 级"):
-   *   --fs-display : 32-72px  · Hero title
-   *   --fs-body    : 14-18px  · everything else that isn't a caption
-   *   --fs-caption : 10-12px  · timestamps, badge chips, meta */
-  /* Body / long-form reading — Newsreader is optimised for reading at
-   * text sizes, tighter and more even color than Cormorant. Chinese runs
-   * fall to Noto Serif SC in the same stack. */
+  
+  
   --font-serif: "Newsreader", "Fraunces", "Source Serif 4", "Noto Serif SC",
                 "思源宋体", "Songti SC", "STSong", "Times New Roman", serif;
-  /* Display / hero / card titles — Fraunces has personality without going
-   * feminine-thin. This is the closest freely-available match to the
-   * Copernicus family Anthropic uses on claude.ai. */
+  
   --font-display: "Fraunces", "Newsreader", "Noto Serif SC", "思源宋体", serif;
-  --font-sans:    var(--font-serif);    /* alias — brand mandates all-serif */
+  --font-sans:    var(--font-serif);    
   --font-mono:    "JetBrains Mono", "SF Mono", "Menlo", "Consolas", monospace;
 
-  /* Three size tiers — clamped so tablets / 4K get sensible scaling. */
+  
   --fs-display: clamp(28px, 3.6vw, 40px);
-  --fs-body:    18px;                   /* was 17px — user asked for bigger */
-  --fs-body-lg: 20px;                   /* card values, quota highlights */
+  --fs-body:    18px;                   
+  --fs-body-lg: 20px;                   
   --fs-caption: 12px;
-  --fs-mono:    14px;                   /* SN / MAC / hex — narrow but legible */
+  --fs-mono:    14px;                   
 }
 
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
 body {
-  /* Body reads with Newsreader (English) + Noto Serif SC (Chinese).
-   * Newsreader has an opsz axis that auto-adjusts stroke and spacing to
-   * the size it's rendered at; combined with weight 450 for CJK and 1.7
-   * line-height we get a comfortable long-form reading rhythm. palt
-   * tightens Chinese punctuation so mixed CJK+Latin doesn't feel loose. */
+  
   font-family: var(--font-serif);
   font-weight: 450;
   color: var(--ink);
@@ -135,11 +79,9 @@ body {
   text-rendering: optimizeLegibility;
   font-optical-sizing: auto;
 }
-/* Form controls inherit body font but with a touch more weight so the
- * english letterforms feel steady at 14-16 px. */
+
 input, select, button, textarea { font-family: inherit; font-weight: 500; }
-/* Display / heading pairing — Fraunces adds a modern warmth that
- * Newsreader on its own would lack. Applied to every card + hero title. */
+
 h1, h2, h3, h4,
 .wo-card__title, .admin-card__title,
 .hero__title, .admin-card__title, .admin-login__title,
@@ -150,12 +92,11 @@ h1, h2, h3, h4,
   font-optical-sizing: auto;
 }
 strong, b { font-weight: 600; }
-/* Tabular numerals wherever numbers matter — SN counters, quota, byte
- * sizes. Fraunces has this feature built in. */
+
 .wo-card__value, .admin-form__status, .slot__pct,
 .admin-meta dd, .admin-audit td { font-variant-numeric: tabular-nums; }
 
-/* ── Corner toggles (debug + lang) ── */
+
 .corner-toggles {
   position: fixed;
   top: 16px;
@@ -174,7 +115,7 @@ strong, b { font-weight: 600; }
 }
 .debug-on #debugBtn { background: #1A1A1A; color: #fff; border-color: #1A1A1A; }
 
-/* ── Hero (logo + title + slogan) ── */
+
 .hero {
   position: relative;
   text-align: center;
@@ -216,10 +157,8 @@ strong, b { font-weight: 600; }
   .corner-toggles { top: 12px; right: 12px; }
 }
 
-/* ── Container ── */
-/* Fluid width — fills the viewport with sane padding at every breakpoint.
- * Content is capped at 1800px on ultra-wide monitors so lines don't get
- * uncomfortably long, but the grid inside still spans the full container. */
+
+
 .container {
   max-width: 1800px;
   margin: 0 auto;
@@ -233,7 +172,7 @@ strong, b { font-weight: 600; }
   .container { padding: 20px 16px; }
 }
 
-/* ── Environment check ── */
+
 .env-check {
   background: var(--rice);
   border: 1px solid var(--line);
@@ -246,9 +185,8 @@ strong, b { font-weight: 600; }
 .env-check__row .badge { min-width: 20px; }
 .env-check.error { border-color: var(--error); background: var(--tint-error); }
 
-/* ── Workorder card ── */
-/* Auto-fit columns: 4 fit on desktop (1280+), 5-6 on wide screens (1600+),
- * collapses to 2 on tablets and 1 on phones. */
+
+
 .wo-card {
   background: var(--paper);
   border: 1px solid var(--line);
@@ -286,7 +224,7 @@ strong, b { font-weight: 600; }
   padding: 16px 20px;
   letter-spacing: 0.5px;
 }
-/* The rule cell always takes the full row so preview text doesn't wrap. */
+
 .wo-card__item--wide { grid-column: 1 / -1; }
 .wo-card__select {
   font-family: var(--font-sans);
@@ -309,7 +247,7 @@ strong, b { font-weight: 600; }
   letter-spacing: 0.5px;
 }
 
-/* ── Action bar ── */
+
 .actions {
   display: flex;
   gap: 12px;
@@ -335,7 +273,7 @@ strong, b { font-weight: 600; }
   transition: background 0.15s, border-color 0.15s;
 }
 .btn:hover:not(:disabled) { background: var(--rice); }
-/* Brand grays only — no ad-hoc opacity that mixes non-palette values. */
+
 .btn:disabled {
   color: var(--ink-500);
   border-color: var(--paper-300);
@@ -349,9 +287,7 @@ strong, b { font-weight: 600; }
 }
 .btn--primary:hover:not(:disabled) { background: var(--vermillion-hover); border-color: var(--vermillion-hover); }
 .btn--ghost { background: transparent; }
-/* Outline variant — secondary CTAs (upload / query / any non-hero action).
- * Ink-outlined on paper: distinct from primary Cinnabar so operators know
- * which button is THE one for this screen. */
+
 .btn--outline {
   background: transparent;
   border-color: var(--ink-900);
@@ -359,7 +295,7 @@ strong, b { font-weight: 600; }
 }
 .btn--outline:hover:not(:disabled) { background: var(--ink-900); color: var(--paper-200); }
 
-/* ── Board grid ── */
+
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
@@ -401,7 +337,7 @@ strong, b { font-weight: 600; }
   transition: width 0.2s ease-out;
 }
 
-/* ── Empty slot state ── */
+
 .slot--empty {
   border-style: dashed;
   border-color: var(--line);
@@ -413,7 +349,7 @@ strong, b { font-weight: 600; }
 }
 .slot--empty p { margin: 0; font-size: var(--fs-body); }
 
-/* ── Big pass/fail banner (worker-facing) ── */
+
 .slot__banner {
   display: none;
   align-items: center;
@@ -441,7 +377,7 @@ strong, b { font-weight: 600; }
   border: 2px solid var(--error);
 }
 
-/* Non-debug mode: hide detail rows so the big banner dominates. */
+
 .debug-off .slot--pass .slot__body,
 .debug-off .slot--fail .slot__body { display: none; }
 
@@ -454,17 +390,17 @@ strong, b { font-weight: 600; }
 
 .debug-off .slot { min-height: 240px; }
 
-/* Non-debug mode: hide dev-facing bits. */
+
 .debug-off #envCheck,
 .debug-off #log,
 .debug-off .actions__hint,
 .debug-off #rescanBtn,
 .debug-off .debug-only { display: none; }
 
-/* Debug badge styling on the toggle button when ON. */
+
 .debug-on #debugBtn { background: #1A1A1A; color: #fff; border-color: #1A1A1A; }
 
-/* Firmware picker card. */
+
 .fw-picker {
   background: var(--tint-warn);
   border: 1px dashed var(--warn);
@@ -487,7 +423,7 @@ strong, b { font-weight: 600; }
 }
 .btn--small { padding: 6px 14px; font-size: var(--fs-body); }
 
-/* ── Log filter controls ── */
+
 .log-controls {
   margin-top: 24px;
   display: flex;
@@ -509,7 +445,7 @@ strong, b { font-weight: 600; }
 .log-controls__select:focus { outline: 2px solid var(--vermillion); }
 .debug-off .log-controls { display: none; }
 
-/* ── Console log (debug tail) ── */
+
 .log {
   margin-top: 32px;
   background: var(--tint-ink-deep);
@@ -527,7 +463,7 @@ strong, b { font-weight: 600; }
 .log__line.err { color: var(--danger-deep); }
 .log__line.ok  { color: var(--success-green); }
 
-/* ── Empty grid hint (no devices plugged) ── */
+
 .grid-empty {
   margin: 32px 0;
   padding: 32px 16px;
@@ -540,10 +476,10 @@ strong, b { font-weight: 600; }
   border-radius: 8px;
 }
 
-/* Non-debug: hide chip / MAC / elapsed rows so workers see only SN + progress. */
+
 .debug-off .slot__row--debug { display: none; }
 
-/* ── Browser block screen (fires before app boots) ── */
+
 .block-screen {
   min-height: 100vh;
   display: flex;
@@ -638,7 +574,7 @@ strong, b { font-weight: 600; }
   color: var(--muted);
 }
 
-/* ── Small helpers ── */
+
 .badge {
   display: inline-block;
   width: 16px; height: 16px; line-height: 16px;
@@ -654,7 +590,7 @@ strong, b { font-weight: 600; }
 .mono { font-family: "SF Mono", "Menlo", monospace; }
 .hidden { display: none !important; }
 
-/* UART port troubleshooting, below connection controls. */
+
 .port-help { margin: 24px 0; padding: 24px; border: 1px solid var(--line, #ded8ce); border-radius: 16px; background: var(--surface, #faf7f0); color: var(--ink, #1a1a1a); }
 .port-help h2 { margin: 0 0 14px; font-size: 21px; }
 .port-help__checklist { margin: 0; padding-left: 22px; line-height: 1.7; }
@@ -666,3 +602,138 @@ strong, b { font-weight: 600; }
 .port-help__note { color: var(--muted, #5c5750); font-size: 14px; }
 .port-help__reminder { margin-bottom: 0; padding-top: 12px; border-top: 1px solid var(--line, #ded8ce); }
 @media (max-width: 700px) { .port-help { padding: 18px; } .port-help__drivers { grid-template-columns: 1fr; } }
+/* Brand roles override legacy flasher tokens, including dynamic device cards. */
+:root {
+ --paper-100:#F3F3F1;--paper-200:#F9F9F9;--paper-300:#E4DEDF;
+ --ink-900:#151518;--ink-700:#707077;--ink-500:#707077;
+ --cinnabar-app:#D73564;--cinnabar-frame:#D73564;--amber-500:#DD8E38;
+ --honey-500:#DD8E38;--success-green:#151518;--danger-deep:#D73564;
+ --bg:#F9F9F9;--bg-elevated:#FFFFFF;--bg-inset:#F3F3F1;
+ --text-primary:#151518;--text-secondary:#707077;--text-muted:#707077;
+ --line:#E4DEDF;--line-strong:#D0D2D2;--vermillion:#D73564;--vermillion-hover:#D73564;
+ --success:#151518;--warn:#DD8E38;--error:#D73564;
+ --tint-error:#F3F3F1;--tint-warn:#F3F3F1;--tint-success:#F3F3F1;--tint-ink-deep:#171717;
+ --font-serif:Inter,'SF Pro Text','PingFang SC','Noto Sans',Roboto,sans-serif;
+ --font-display:var(--font-serif);--font-sans:var(--font-serif);
+ --fs-display:32px;--fs-body:16px;--fs-body-lg:18px;--fs-caption:12px;--fs-mono:14px;
+}
+body{background:var(--bg);font-weight:400;line-height:1.5;font-feature-settings:normal}
+h1,h2,h3,h4,strong,b,input,select,button,textarea,.slot__title{font-weight:600;letter-spacing:0}
+a,button,input,select{touch-action:manipulation}
+:focus-visible{outline:3px solid #561EE1;outline-offset:4px}
+.site-header{max-width:1248px;margin:auto;padding:24px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--line);gap:16px}
+.brand-lockup{display:flex;align-items:center;gap:12px;text-decoration:none;color:var(--ink);font-size:24px;font-weight:600;letter-spacing:-.6px}
+.brand-lockup img{display:block;object-fit:contain}
+.corner-toggles{position:static;display:flex;gap:8px}
+.btn--corner{background:transparent;backdrop-filter:none;font-size:12px;min-width:44px}
+.hero{max-width:1248px;margin:auto;padding:48px 24px 32px;display:flex;align-items:flex-end;justify-content:space-between;gap:24px;text-align:left;background:transparent;border:0}
+.eyebrow{margin:0 0 12px;color:var(--vermillion);font-size:12px;line-height:16px;font-weight:600;letter-spacing:.8px}
+.hero__title{font-family:var(--font-sans);font-size:32px;line-height:38px;font-weight:600;letter-spacing:-.8px;margin:0 0 12px}
+.hero__subtitle{font-size:16px;line-height:24px;letter-spacing:0;color:var(--text-secondary);margin:0;max-width:620px}
+.hero__version{display:flex;align-items:center;gap:6px;font:400 12px/16px var(--font-sans);white-space:nowrap;background:var(--bg-elevated);border:1px solid var(--line);border-radius:999px;padding:8px 12px}
+.version-dot{width:6px;height:6px;border-radius:50%;background:#D73564}
+.container{max-width:1248px;padding:0 24px 32px;margin:auto}
+.section-heading{display:flex;gap:16px;align-items:center;margin:0 0 24px}
+.section-heading h2{font-size:24px;line-height:29px;margin:0 0 4px;font-weight:600;letter-spacing:-.4px}
+.section-heading p{font-size:16px;line-height:24px;color:var(--text-secondary);margin:0}
+.step-number{flex:none;width:44px;height:44px;display:grid;place-items:center;border-radius:12px;background:var(--bg-elevated);border:1px solid var(--line);font-size:14px;font-weight:600;color:var(--text-secondary)}
+.wo-card{padding:24px;border-radius:16px;gap:24px;grid-template-columns:repeat(4,minmax(0,1fr));margin-bottom:16px}
+.wo-card__item{min-width:0}.wo-card__value,.wo-card__preview{overflow-wrap:anywhere}
+.wo-card__label{font-size:12px;line-height:16px;color:var(--text-secondary);font-weight:600;margin-bottom:8px}
+.wo-card__value{font-size:16px;line-height:24px;font-weight:400}
+.wo-card__preview{font-size:14px;letter-spacing:0}
+.wo-card__item--wide{border-top:1px solid var(--line);padding-top:16px}
+.fw-picker{background:var(--bg-elevated);border:1px solid var(--line);border-radius:16px;padding:24px;margin-bottom:32px;display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:24px}
+.fw-picker>.wo-card__label{font-size:18px;line-height:24px;color:var(--ink);margin-bottom:8px}
+.fw-hint{grid-column:1;font-size:16px;line-height:24px;color:var(--text-secondary)}
+.fw-row{grid-column:2;grid-row:1 / 3;align-self:center}
+.fw-selected{grid-column:1 / -1;margin-top:24px;padding:16px;background:var(--bg-inset);border-radius:8px;font:400 14px/22px var(--font-sans);overflow-wrap:anywhere}
+.fw-status{grid-column:1 / -1;font-family:var(--font-sans)}
+.fw-status:empty{display:none}
+.btn{min-height:44px;padding:12px 20px;border-radius:12px;font-size:14px;line-height:20px;font-weight:600;transition:background 200ms,border-color 200ms;display:inline-flex;align-items:center;justify-content:center;text-align:center}
+.btn--primary{background:#000000;border-color:#000000;color:#FFFFFF}
+.btn--primary:hover:not(:disabled){background:#333333;border-color:#333333}
+.fw-picker .btn--primary{background:var(--bg-elevated);color:var(--ink);border-color:var(--line-strong)}
+.fw-picker .btn--primary:hover{background:var(--bg-inset);border-color:var(--ink)}
+.fw-row label:focus-within{outline:3px solid #561EE1;outline-offset:4px}
+.fw-row label{position:relative;overflow:hidden;cursor:pointer}
+.fw-row input[type=file]{display:block!important;position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer}
+.device-workspace{padding:24px;background:var(--bg-elevated);border:1px solid var(--line);border-radius:24px;margin-bottom:24px}
+.device-workspace .step-number{background:var(--bg-inset);border-color:transparent}
+.actions{gap:12px;margin-bottom:16px}.actions__hint{font-size:14px;margin-bottom:24px}
+#modeBadge{font-family:var(--font-sans);font-size:12px!important}
+.grid:empty{display:none}.grid-empty{border:1px dashed var(--line-strong);background:var(--bg);margin:24px 0 0;padding:32px 16px;border-radius:16px;font:400 16px/24px var(--font-sans);letter-spacing:0;color:var(--text-secondary)}
+.slot{border-radius:16px;padding:24px;min-width:0}.slot__row{gap:12px}.slot__row .v{overflow-wrap:anywhere;min-width:0}
+.slot__banner{letter-spacing:0;border-radius:12px}.slot__banner-text{font-weight:600}.progress{height:8px;border-radius:999px}.progress__bar{background:#D73564}
+.port-help{background:var(--bg-elevated);padding:24px;border-radius:24px;margin:0;border:1px solid var(--line)}
+.port-help h2{font-size:24px;line-height:29px;font-weight:600;letter-spacing:-.4px;margin-bottom:24px}
+.port-help__checklist{list-style:none;padding:0;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:24px;counter-reset:checks;line-height:24px}
+.port-help__checklist li{counter-increment:checks;position:relative;padding-left:28px;color:var(--text-secondary);font-size:16px}
+.port-help__checklist li:before{content:counter(checks) '.';position:absolute;left:0;color:var(--ink);font-weight:600}
+.port-help__drivers{gap:16px;margin-top:24px}.port-help__drivers>div{padding:24px;background:var(--bg);border-radius:16px;border:1px solid var(--line)}
+.port-help h3{font-size:18px;line-height:24px;margin:0 0 8px;font-weight:600}
+.port-help__drivers p{font-size:14px;line-height:20px;color:var(--text-secondary);margin:0 0 8px}
+.port-help a{color:#D73564;min-height:44px;display:flex;align-items:center;font-size:14px;line-height:20px;font-weight:600;padding:8px 0}
+.port-help a:focus-visible{outline-color:#561EE1}
+.port-help__note{font-size:14px;margin:16px 0;color:var(--text-secondary)}
+.port-help__reminder{font-size:14px;margin-top:16px;padding-top:16px;color:var(--ink)}
+.site-footer{max-width:1248px;margin:auto;padding:0 24px 32px;display:flex;justify-content:space-between;gap:16px;color:var(--text-secondary);font-size:12px;line-height:16px}
+.site-footer span:first-child{font-weight:600;color:var(--ink)}
+.env-check,.block-card{border-radius:16px}.log{border-radius:16px}.log__line.err{color:#F31568}.log__line.ok{color:#10BFC4}
+@media(max-width:900px){.hero{align-items:flex-start;flex-direction:column}.wo-card{grid-template-columns:repeat(2,minmax(0,1fr))}.port-help__checklist{grid-template-columns:1fr;gap:16px}.port-help__drivers{grid-template-columns:1fr}.port-help__drivers>div{padding:16px}}
+@media(max-width:600px){.site-header{padding:16px}.brand-lockup{font-size:24px}.hero{padding:32px 16px}.container{padding:0 16px 24px}.section-heading{align-items:flex-start;gap:12px}.section-heading h2{font-size:24px}.fw-picker{display:block;padding:16px}.fw-row{margin-top:24px}.fw-selected{font-size:16px;line-height:24px}.device-workspace,.port-help{padding:16px;border-radius:16px}.wo-card{grid-template-columns:1fr;padding:16px}.actions{align-items:stretch}.actions .btn{flex:1 1 auto}#modeBadge{margin-left:0!important;width:100%}.site-footer{padding:0 16px 24px;flex-wrap:wrap}.grid{grid-template-columns:1fr}.btn--corner{padding:12px}.port-help h2{overflow-wrap:anywhere}.fw-hint,.port-help__note,.port-help__reminder{font-size:16px;line-height:24px}}
+@media(prefers-reduced-motion:reduce){*{transition:none!important}}
+/* AA contrast: rose text sits on white; muted surfaces use ink text. */
+:root{--error:#151518}
+.eyebrow{color:var(--ink);display:flex;align-items:center;gap:8px}
+.eyebrow:before{content:'';display:block;width:24px;height:3px;background:#D73564}
+.port-help__drivers>div{background:#FFFFFF}
+
+/* Compact operator layout: essential controls before batch metadata. */
+.site-header{padding-top:12px;padding-bottom:12px}
+.brand-lockup img{width:36px;height:36px}
+.hero{padding-top:20px;padding-bottom:20px;align-items:center}
+.hero .eyebrow,.hero__subtitle{display:none}
+.hero__title{font-size:24px;line-height:29px;margin:0}
+.hero__version{margin:0}
+.fw-picker{padding:16px;margin-bottom:16px;column-gap:16px}
+.fw-picker>.wo-card__label{font-size:18px;margin-bottom:4px}
+.fw-hint{font-size:14px;line-height:20px}
+.fw-selected{margin-top:12px;padding:8px 12px;font-size:14px;line-height:20px}
+.device-workspace{padding:16px;margin-bottom:16px;border-radius:16px}
+.section-heading{margin-bottom:12px;gap:12px}
+.section-heading h2{font-size:18px;line-height:24px;margin:0}
+.section-heading p{font-size:14px;line-height:20px;margin-top:4px}
+.step-number{width:36px;height:36px;font-size:12px}
+.actions{margin-bottom:0;gap:8px}
+.actions__hint{margin:8px 0}
+.grid-empty{margin-top:12px;padding:12px;font-size:14px;line-height:20px}
+.grid:not(:empty){margin-top:16px}
+.wo-card{padding:16px;gap:12px 24px;margin-bottom:16px}
+.wo-card__label{margin-bottom:4px}
+.wo-card__item--wide{padding-top:12px}
+.port-help{padding:0;border-radius:16px}
+.port-help>summary{padding:16px;min-height:52px;cursor:pointer;font-size:16px;line-height:24px;font-weight:600}
+.port-help>summary::marker{color:#D73564}
+.port-help[open]>summary{border-bottom:1px solid var(--line)}
+.port-help__content{padding:16px}
+.container{padding-bottom:20px}
+.site-footer{padding-bottom:20px}
+@media(max-width:600px){
+ .hero{padding:16px;flex-direction:row;flex-wrap:wrap;gap:8px}
+ .hero__title{font-size:24px}
+ .hero__version{font-size:12px;padding:4px 8px}
+ .fw-picker{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px}
+ .fw-picker>.wo-card__label{font-size:16px;line-height:24px;margin:0}
+ .fw-hint{grid-column:1 / -1;grid-row:2;font-size:16px;line-height:24px}
+ .fw-row{grid-column:2;grid-row:1;margin:0}
+ .fw-row .btn{padding:10px 12px}
+ .fw-selected{margin-top:4px;font-size:14px;line-height:20px}
+ .section-heading p{display:none}
+ .actions .btn{flex:1 1 auto;padding:10px 12px}
+ #modeBadge{margin-top:4px}
+ .wo-card{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+ .wo-card__value{font-size:14px;line-height:20px}
+ .wo-card__preview{font-size:12px;line-height:18px}
+ .brand-lockup{font-size:20px;gap:8px}
+}

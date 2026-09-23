@@ -3,9 +3,25 @@
 
 const STRINGS = {
   zh: {
+    "design.eyebrow": "固件与设备设置",
+    "design.prepare": "准备固件",
+    "design.prepare_hint": "选择本批次的工单固件包。",
+    "design.connect": "连接设备",
+    "design.connect_hint": "授权新相框，即可开始烧录。",
+    "design.help": "连接帮助",
+    "design.footer": "珍藏每一个重要时刻。",
+
+    "help.port.title": "未检测到设备端口？（未选择端口）",
+    "help.port.cable": "检查线缆：使用支持数据传输的 USB 线，不能仅支持充电。",
+    "help.port.power": "检查电源：确认设备电源指示灯已亮起。",
+    "help.port.browser": "浏览器支持：请使用已启用 Web Serial 的 Google Chrome 或 Microsoft Edge。",
+    "help.port.download": "在 WCH 页面中，请点击带下载图标的蓝色按钮。",
+    "help.port.restart": "安装驱动后，请重启浏览器，重新连接设备并再次授权，然后选择串口。",
+    "help.port.platform": "Windows 和 Mac（Silicon Labs）",
+
     // Header
-    'app.title':          'MyFrame Production Center',
-    'app.subtitle':       'MyFrame 固件烧录 · 面向工厂产线 & 现场服务',
+    'app.title':          '生产中心',
+    'app.subtitle':       '准备固件，连接相框，让美好即刻呈现。',
     'app.brand':          'Flasher',
     'header.workmode.dev':        'Develop',
     'header.workmode.prod':       'Production',
@@ -183,8 +199,24 @@ const STRINGS = {
   },
 
   en: {
-    'app.title':          'MyFrame Production Center',
-    'app.subtitle':       'MyFrame firmware flasher · for factory & field service',
+    "design.eyebrow": "Firmware & device setup",
+    "design.prepare": "Prepare firmware",
+    "design.prepare_hint": "Select the work order package for this batch.",
+    "design.connect": "Connect your devices",
+    "design.connect_hint": "Authorize each new frame to begin flashing.",
+    "design.help": "Connection help",
+    "design.footer": "Made for moments that matter.",
+
+    "help.port.title": "Device port not detected? (No port selected)",
+    "help.port.cable": "Check cable: use a USB cable that supports data transfer, not just charging.",
+    "help.port.power": "Check power: confirm the device power indicator light is on.",
+    "help.port.browser": "Browser support: use Google Chrome or Microsoft Edge with Web Serial enabled.",
+    "help.port.download": "On WCH pages, use the blue button with the download icon.",
+    "help.port.restart": "After installing the driver, restart your browser, reconnect the device, and authorize it again to select its port.",
+    "help.port.platform": "Windows & Mac (Silicon Labs)",
+
+    'app.title':          'Production center',
+    'app.subtitle':       'Prepare your firmware. Connect a frame. Bring it to life.',
     'app.brand':          'Flasher',
     'header.workmode.dev':        'Develop',
     'header.workmode.prod':       'Production',

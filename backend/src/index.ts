@@ -1,3 +1,4 @@
+import { deviceSettingsRouter } from "./routes/device_settings";
 import { frameBuiltinRouter } from "./routes/frame_builtin";
 import cors from "cors";
 import dotenv from "dotenv";
@@ -156,6 +157,7 @@ app.use("/api", syncTransitRouter);
 app.use("/api", familyRouter);
 app.use("/api", frameSlideshowRouter(uploadDir));
 app.use("/api", framePairingRouter);
+app.use("/api", deviceSettingsRouter);
 app.use("/api", frameFirmwareRouter);
 app.use("/api", frameInviteRouter());
 app.use("/api", frameSleepRouter());

@@ -1,3 +1,4 @@
+import { classifyFramePresence } from "../services/frame_mqtt";
 import express from "express";
 import { Router, Request, Response } from "express";
 import multer from "multer";
@@ -132,7 +133,7 @@ userProfileRouter.get("/v1/user/profile", (req: Request, res: Response) => {
       is_owner: isFrameOwner(data, f.id, account.id),
       user_role: isFrameOwner(data, f.id, account.id) ? "OWNER" : "MEMBER",
       wifi_ssid: f.wifiSsid,
-      online: f.wifiStatus === "online" && !!(f.wifiSsid && String(f.wifiSsid).trim()),
+      online: classifyFramePresence(Date.now() - (f.lastHeartbeatAtMs ?? f.lastSeenAtMs ?? 0), false, f.firmwareVersion) === "online",
       last_seen_at: f.lastSeenAtMs,
       battery: f.battery ?? null,
     })),
@@ -606,7 +607,7 @@ userProfileRouter.get("/v1/user/frames", (req: Request, res: Response) => {
       ble_mac: normalizeMac(f.bleMac || f.stationMac || f.id),
       station_mac: f.stationMac ? normalizeMac(f.stationMac) : null,
       wifi_ssid: f.wifiSsid,
-      online: f.wifiStatus === "online",
+      online: classifyFramePresence(Date.now() - (f.lastHeartbeatAtMs ?? f.lastSeenAtMs ?? 0), false, f.firmwareVersion) === "online",
       firmware_version: f.firmwareVersion,
       last_seen_at: f.lastSeenAtMs,
       is_owner: isFrameOwner(data, f.id, user.userId),

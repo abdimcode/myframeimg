@@ -344,48 +344,27 @@ export function normalizeMac(mac: string): string {
   return mac.replace(/[^a-fA-F0-9]/gi, "").toUpperCase();
 }
 
-/** Add a numeric offset to a 12‑hex MAC (ESP32 convention: Wi‑Fi STA = BLE + 2). */
-function addMacOffset(mac: string, offset: number): string {
-  const v = parseInt(mac, 16);
-  if (!Number.isFinite(v)) return mac;
-  return (v + offset).toString(16).toUpperCase().padStart(12, "0");
+/** Resolve exact persisted aliases only. Nearby MACs can be separate frames. */
+export function resolveMqttHardwareMac(raw: string): string | null {
+  const key = normalizeMac(String(raw ?? "").trim());
+  if (!key) return null;
+  if (frames.has(key)) return key;
+  const rows = db.read().frames;
+  const exact = rows.find(f => normalizeMac(f.stationMac ?? "") === key)
+    ?? rows.find(f => normalizeMac(f.id) === key)
+    ?? rows.find(f => normalizeMac(f.bleMac) === key);
+  const station = exact?.stationMac ? normalizeMac(exact.stationMac) : key;
+  return /^[A-F0-9]{12}$/.test(station) ? station : null;
 }
 
-/** Resolve any device identifier to its 12‑hex station (MQTT/Wi‑Fi STA) MAC.
- *  - A BLE MAC (or any 12‑hex that is not the station MAC) is resolved to the
- *    frame's Wi‑Fi STA MAC (ESP32: BLE + 2) so downlinks land on the topic the
- *    frame actually subscribes to: `/myframe/{STA_MAC}`.
- *  - Non‑12‑hex identifiers are looked up in the DB (bleMac/id → stationMac).
- */
-export function resolveMqttHardwareMac(raw: string): string | null {
-  const m = String(raw ?? "").trim();
-  if (!m) return null;
-  const upper = normalizeMac(m);
-
-  const data = db.read();
-
-  if (!/^[A-F0-9]{12}$/.test(upper)) {
-    const match = data.frames.find(function (f) {
-      return normalizeMac(f.bleMac) === upper || normalizeMac(f.id) === upper;
-    });
-    if (match?.stationMac) return normalizeMac(match.stationMac);
-    return upper;
-  }
-
-  // A MAC is "known as the Wi‑Fi STA MAC" when an online frame's MQTT clientid
-  // matches it (the `frames` map is keyed by clientid), or an active slideshow
-  // is keyed by it (the app uses the STA MAC for slideshow routes). We do NOT
-  // trust DB `stationMac` here — it is sometimes the BLE MAC (bad pairing data).
-  const knownStation = (mac: string): boolean =>
-    frames.has(mac) ||
-    Object.prototype.hasOwnProperty.call(data.slideshowsByBleMac ?? {}, mac);
-
-  // Prefer whichever of {upper, upper±2} is the known STA MAC. ESP32 uses a
-  // deterministic BLE↔STA offset of 2, so this resolves BLE → STA both ways.
-  if (knownStation(upper)) return upper;
-  if (knownStation(addMacOffset(upper, 2))) return addMacOffset(upper, 2);
-  if (knownStation(addMacOffset(upper, -2))) return addMacOffset(upper, -2);
-  return upper;
+/** v0.0.3 uplinks are observed every 60s; retain older 10-minute firmware grace. */
+export function frameHeartbeatWindows(version?: string) {
+  const minuteFirmware = String(version ?? "").replace(/^v/i, "") === "0.0.3";
+  return {
+    interval: minuteFirmware ? 60_000 : FRAME_HEART_INTERVAL_MS,
+    online: minuteFirmware ? 120_000 : HEARTBEAT_ONLINE_MS,
+    timeout: minuteFirmware ? 120_000 : HEARTBEAT_TIMEOUT_MS,
+  };
 }
 
 function mqttDebugRx(topic: string, raw: Buffer) {
@@ -756,10 +735,14 @@ function handleMessage(topic: string, raw: Buffer) {
     return;
   }
   db.mutate((draft) => {
-    const prefix10 = mac.slice(0, 10);
-    let match = draft.frames.find(
-      (f) => normalizeMac(f.bleMac).startsWith(prefix10) || normalizeMac(f.stationMac ?? "") === mac,
-    );
+    // Prefer the exact station or ID. Use only the alias reported in this
+    // uplink, and never steal a row already assigned to another station.
+    const reportedBle = normalizeMac(String(data.stamac ?? ""));
+    let match = draft.frames.find(f => normalizeMac(f.stationMac ?? "") === mac)
+      ?? draft.frames.find(f => normalizeMac(f.id) === mac)
+      ?? draft.frames.find(f => !f.stationMac && (
+        normalizeMac(f.bleMac) === mac ||
+        (reportedBle.length === 12 && normalizeMac(f.bleMac) === reportedBle)));
     if (!match) {
       match = {
         id: mac.toLowerCase(),
@@ -782,6 +765,9 @@ function handleMessage(topic: string, raw: Buffer) {
     }
     match.wifiStatus = "online";
     match.lastSeenAtMs = Date.now();
+    match.lastHeartbeatAtMs = match.lastSeenAtMs;
+    if (rec.storageUsed != null) match.storageUsed = rec.storageUsed;
+    if (rec.storageTotal != null) match.storageTotal = rec.storageTotal;
     // The MQTT `clientid` (`mac`) is the authoritative Wi‑Fi STA MAC.
     match.stationMac = mac;
     // The heart/login `stamac` field carries the BLE MAC (colons included).
@@ -827,6 +813,10 @@ function handleMessage(topic: string, raw: Buffer) {
   });
 
   maybeSyncFrameLocale(mac, data);
+  if (action === "heart" || action === "login") {
+    void import("./device_settings").then(m => m.flushDeviceSettings(mac))
+      .catch(() => { /* persisted settings remain pending for next uplink */ });
+  }
 
   switch (action) {
     case "login": {
@@ -836,13 +826,6 @@ function handleMessage(topic: string, raw: Buffer) {
         stamac: data.stamac,
       };
       
-      if (mac.length === 12) {
-        db.mutate(function(draft) {
-          var prefix = mac.slice(0, 10);
-          var match = draft.frames.find(function(f) { return normalizeMac(f.bleMac).startsWith(prefix) && !f.stationMac; });
-          if (match) match.stationMac = mac;
-        });
-      }
       break;
     }
     case "ota":
@@ -955,11 +938,13 @@ export function startFrameMqtt(): void {
     db.mutate((draft) => {
       for (const f of draft.frames) {
         if (f.wifiStatus === "never_provisioned") continue;
-        const age = f.lastSeenAtMs != null ? now - f.lastSeenAtMs : null;
-        const isLive = age != null && age < HEARTBEAT_TIMEOUT_MS;
+        const seen = f.lastHeartbeatAtMs ?? f.lastSeenAtMs;
+        const age = seen != null ? now - seen : null;
+        const grace = frameHeartbeatWindows(f.firmwareVersion).timeout;
+        const isLive = age != null && age >= 0 && age < grace;
         if (!isLive && f.wifiStatus !== "offline") {
           f.wifiStatus = "offline";
-          console.log(`[frame-mqtt] Frame ${f.id} marked offline (last seen ${age != null ? Math.round(age / 1000) + "s ago" : "never"}; grace=${HEARTBEAT_TIMEOUT_MS / 1000}s)`);
+          console.log(`[frame-mqtt] Frame ${f.id} marked offline (last seen ${age != null ? Math.round(age / 1000) + "s ago" : "never"}; grace=${grace / 1000}s)`);
         } else if (isLive && f.wifiStatus === "offline") {
           f.wifiStatus = "online";
         }
@@ -999,25 +984,26 @@ function frameDisplayName(mac: string): string | undefined {
 /** True when the frame has been heard within the reachable grace window. */
 export function isFrameMqttOnline(macRaw: string): boolean {
   const rec = getFrame(macRaw);
-  return rec != null && rec.age < HEARTBEAT_TIMEOUT_MS;
+  return rec != null && rec.age >= 0 && rec.age < frameHeartbeatWindows(rec.firmwareVersion).timeout;
 }
 
 /** Fresh heart (within ONLINE window). */
 export function isFrameMqttFresh(macRaw: string): boolean {
   const rec = getFrame(macRaw);
-  return rec != null && rec.age < HEARTBEAT_ONLINE_MS;
+  return rec != null && rec.age >= 0 && rec.age < frameHeartbeatWindows(rec.firmwareVersion).online;
 }
 
 export type FramePresence = "online" | "idle" | "sleeping" | "offline";
 
 /** Classify presence from last-seen age + optional scheduled sleep. */
-export function classifyFramePresence(ageMs: number | null | undefined, sleeping = false): FramePresence {
+export function classifyFramePresence(ageMs: number | null | undefined, sleeping = false, version?: string): FramePresence {
+  const windows = frameHeartbeatWindows(version);
   // A frame that has not heartbeated within the grace window is offline,
   // regardless of any scheduled sleep window.
   if (ageMs == null || !Number.isFinite(ageMs) || ageMs < 0) return "offline";
-  if (ageMs >= HEARTBEAT_TIMEOUT_MS) return "offline";
+  if (ageMs >= windows.timeout) return "offline";
   if (sleeping) return "sleeping";
-  if (ageMs < HEARTBEAT_ONLINE_MS) return "online";
+  if (ageMs < windows.online) return "online";
   return "idle";
 }
 
@@ -1041,8 +1027,8 @@ export function isDeviceSleeping(macRaw: string): boolean {
       (id) => id && (normalizeMac(id) === normalizeMac(mac) || resolveMqttHardwareMac(id) === mac),
     );
   });
-  const lastSeen = Math.max(rec?.lastSeen ?? 0, pairedFrame?.lastSeenAtMs ?? 0);
-  const alive = lastSeen > 0 && now - lastSeen < HEARTBEAT_TIMEOUT_MS;
+  const lastSeen = Math.max(rec?.lastSeen ?? 0, pairedFrame?.lastHeartbeatAtMs ?? pairedFrame?.lastSeenAtMs ?? 0);
+  const alive = lastSeen > 0 && now - lastSeen < frameHeartbeatWindows(rec?.firmwareVersion ?? pairedFrame?.firmwareVersion).timeout;
   if (!alive) return false;
 
   if (pairedFrame?.sleepConfig?.enabled === false) return false;
@@ -1131,8 +1117,9 @@ export function getStaleDbFrames(): Array<{ id: string; bleMac: string; lastSeen
   const now = Date.now();
   return db.read().frames.filter((f) => {
     if (f.wifiStatus === "never_provisioned") return false;
-    if (!f.lastSeenAtMs) return true;
-    return now - f.lastSeenAtMs > HEARTBEAT_TIMEOUT_MS;
+    const seen = f.lastHeartbeatAtMs ?? f.lastSeenAtMs;
+    if (!seen) return true;
+    return now - seen >= frameHeartbeatWindows(f.firmwareVersion).timeout;
   }).map((f) => ({ id: f.id, bleMac: f.bleMac, lastSeenAtMs: f.lastSeenAtMs }));
 }
 
@@ -1140,7 +1127,7 @@ export function listFrames(): Array<FrameRecord & { mac: string; age: number }> 
   const now = Date.now();
   const out: Array<FrameRecord & { mac: string; age: number }> = [];
   for (const [mac, rec] of frames) {
-    out.push({ mac, ...rec, age: now - rec.lastSeen });
+    out.push({ mac, ...rec, status: now - rec.lastSeen < frameHeartbeatWindows(rec.firmwareVersion).online ? "online" : "offline", age: now - rec.lastSeen });
   }
   return out.sort((a, b) => a.age - b.age);
 }

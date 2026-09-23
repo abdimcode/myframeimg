@@ -4,29 +4,23 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>MyFrame Production Center</title>
-  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="production-center.css?v=20260920-compact2" />
 </head>
 <body>
-  <!-- ── Corner toggles (float above hero) ────────────────── -->
-  <div class="corner-toggles">
-    <button id="debugBtn" class="btn btn--ghost btn--corner" aria-label="Toggle debug mode">○ DEBUG</button>
-    <button id="langBtn" class="btn btn--ghost btn--corner" aria-label="Toggle language">EN</button>
-  </div>
-
-  <!-- ── Hero (logo + title + slogan combined) ────────────── -->
-  <section class="hero">
-    <div class="hero__logo" aria-label="MyFrame">
-      <!-- Inlined from docs/M2/M2-品牌资产/myframe-logo-v2.svg (2026-08-08 · 朱砂 #C83838) -->
-      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 200" role="img" aria-label="MyFrame">
-        <text x="80" y="120" style="font-family:'Cormorant Garamond','Noto Serif SC',serif;font-weight:400;font-size:88px;letter-spacing:8px;fill:#1A1A1A;">MY</text>
-        <text x="270" y="120" style="font-family:'Cormorant Garamond','Noto Serif SC',serif;font-weight:500;font-size:88px;letter-spacing:8px;fill:#C83838;">FRAME</text>
-      </svg>
+  <header class="site-header">
+    <a class="brand-lockup" href="./" aria-label="MyFrame Production Center"><img src="myframe-brand.png" alt="" width="44" height="44" /><span>MyFrame</span></a>
+    <div class="corner-toggles">
+      <button id="debugBtn" class="btn btn--ghost btn--corner" aria-label="Toggle debug mode">○ DEBUG</button>
+      <button id="langBtn" class="btn btn--ghost btn--corner" aria-label="Toggle language">EN</button>
     </div>
-    <h1 class="hero__title" data-i18n="app.title">MyFrame 生产工具</h1>
-    <p class="hero__subtitle" data-i18n="app.subtitle">MyFrame 固件烧录 · 面向工厂产线 &amp; 现场服务</p>
-    <p class="hero__version">
-      <strong data-i18n="app.brand">Flasher</strong> v0.1.0 · <span id="workMode">—</span>
-    </p>
+  </header>
+  <section class="hero">
+    <div class="hero__copy">
+      <p class="eyebrow" data-i18n="design.eyebrow">Firmware &amp; device setup</p>
+      <h1 class="hero__title" data-i18n="app.title">Production center</h1>
+      <p class="hero__subtitle" data-i18n="app.subtitle">Prepare your firmware. Connect a frame. Bring it to life.</p>
+    </div>
+    <p class="hero__version"><span class="version-dot" aria-hidden="true"></span><strong data-i18n="app.brand">Flasher</strong> v0.1.0 · <span id="workMode">—</span></p>
   </section>
 
   <main class="container">
@@ -36,11 +30,13 @@
     <section id="envCheck" class="env-check" aria-label="environment check"></section>
 
     <!-- ② Workorder card (hidden until bootstrap loads) ─────── -->
-    <section id="woCard" class="wo-card hidden" aria-label="workorder"></section>
+
 
     <!-- ②b Firmware picker (always visible — worker needs to pick .myfw) -->
     <section id="fwPicker" class="fw-picker" aria-label="firmware picker"></section>
 
+    <section class="device-workspace" aria-labelledby="deviceHeading">
+    <div class="section-heading"><span class="step-number">02</span><div><h2 id="deviceHeading" data-i18n="design.connect">Connect your devices</h2><p data-i18n="design.connect_hint">Authorize each new frame to begin flashing.</p></div></div>
     <!-- ③ Actions ───────────────────────────────────────────── -->
     <div class="actions">
       <button id="connectBtn" class="btn btn--primary" data-i18n="action.connect">授权新设备（首次插入需授权）</button>
@@ -52,7 +48,37 @@
 
     <!-- ④ Board grid + empty hint ─────────────────────────── -->
     <section id="grid" class="grid" aria-label="board grid"></section>
-    <p id="gridEmpty" class="grid-empty">请插入设备</p>
+    <p id="gridEmpty" class="grid-empty" data-i18n="grid.empty">请插入设备</p>
+
+    </section>
+
+    <section id="woCard" class="wo-card hidden" aria-label="workorder"></section>
+
+    <details class="port-help">
+      <summary id="portHelpTitle" data-i18n="help.port.title">Device port not detected? (No port selected)</summary>
+      <div class="port-help__content">
+      <ul class="port-help__checklist">
+        <li data-i18n="help.port.cable">Check cable: use a USB data cable, not a charging-only cable.</li>
+        <li data-i18n="help.port.power">Check power: confirm the power indicator is on.</li>
+        <li data-i18n="help.port.browser">Use Google Chrome or Microsoft Edge with Web Serial enabled.</li>
+      </ul>
+      <div class="port-help__drivers">
+        <div><h3>CP2102 / CP210x</h3><p data-i18n="help.port.platform">Windows &amp; Mac (Silicon Labs)</p>
+          <a href="https://www.silabs.com/developers/usb-to-uart-bridge-vcp-drivers" target="_blank" rel="noopener noreferrer">Silicon Labs · CP210x ↗</a>
+        </div>
+        <div><h3>CH342 / CH343 / CH9102</h3>
+          <a href="https://www.wch-ic.com/downloads/CH343SER_EXE.html" target="_blank" rel="noopener noreferrer">Windows · CH343SER ↗</a>
+          <a href="https://www.wch-ic.com/downloads/CH34xVCP_PKG.html" target="_blank" rel="noopener noreferrer">Mac · CH34xVCP ↗</a>
+        </div>
+        <div><h3>CH340 / CH341</h3>
+          <a href="https://www.wch-ic.com/downloads/CH341SER_EXE.html" target="_blank" rel="noopener noreferrer">Windows · CH341SER ↗</a>
+          <a href="https://www.wch-ic.com/downloads/CH341SER_MAC_ZIP.html" target="_blank" rel="noopener noreferrer">Mac · CH341SER ↗</a>
+        </div>
+      </div>
+      <p class="port-help__note" data-i18n="help.port.download">On WCH pages, use the blue button with the download icon.</p>
+      <p class="port-help__reminder" data-i18n="help.port.restart">Restart your browser after installing the driver, reconnect the device, and authorize it again.</p>
+      </div>
+    </details>
 
     <!-- ⑤ Log tail (debug-only) ────────────────────────────── -->
     <div class="log-controls">
@@ -64,6 +90,7 @@
     </div>
     <pre id="log" class="log" aria-label="log"></pre>
   </main>
+  <footer class="site-footer"><span>MyFrame</span><span data-i18n="design.footer">Made for moments that matter.</span></footer>
 
   <script type="module">
     // ── Browser gate ───────────────────────────────────────────────

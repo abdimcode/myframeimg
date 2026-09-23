@@ -5,12 +5,10 @@ import { verifyUserJwtBearer } from "../services/app_user_jwt";
 import { isFirmwareVersionNewer, latestFirmwareRelease } from "../data/firmware_releases";
 import {
   classifyFramePresence,
+  frameHeartbeatWindows,
   DEFAULT_UTC_OFFSET_MINUTES,
   timezoneOffsetForCountry,
-  FRAME_HEART_INTERVAL_MS,
   getFrame,
-  HEARTBEAT_ONLINE_MS,
-  HEARTBEAT_TIMEOUT_MS,
   isMqttConnected,
   isTimeInWindow,
   normalizeMac,
@@ -56,22 +54,23 @@ function frameStatusPayload(macRaw: string) {
     return ids.some(function (id) {
       if (!id) return false;
       if (resolveMqttHardwareMac(id) === mac) return true;
-      return normalizeMac(id) === macNorm || normalizeMac(id).slice(0, 10) === macNorm.slice(0, 10);
+      return normalizeMac(id) === macNorm;
     });
   });
 
+  var windows = frameHeartbeatWindows(rec?.firmwareVersion ?? paired?.firmwareVersion);
   var now = Date.now();
-  var lastSeen = rec?.lastSeen ?? paired?.lastSeenAtMs ?? 0;
+  var lastSeen = rec?.lastSeen ?? paired?.lastHeartbeatAtMs ?? paired?.lastSeenAtMs ?? 0;
   var ageMs = lastSeen > 0 ? now - lastSeen : null;
   // Reachability is driven by the real last-heartbeat age — NOT the DB
   // `lastSeenAtMs`, which photo-upload/send paths also touch and would
   // otherwise make an offline frame appear `mqtt_connected`.
-  var frameAlive = ageMs != null && ageMs < HEARTBEAT_TIMEOUT_MS;
+  var frameAlive = ageMs != null && ageMs >= 0 && ageMs < windows.timeout;
   var frameReachable = frameAlive;
   // Only report "sleeping" when the frame is actually alive and inside its
   // scheduled sleep window (never for a dead/offline frame).
   var sleeping = frameAlive && isInSleepWindow(data, mac, paired);
-  var presence = classifyFramePresence(ageMs, sleeping);
+  var presence = classifyFramePresence(ageMs, sleeping, rec?.firmwareVersion ?? paired?.firmwareVersion);
   // App "online" means a FRESH heartbeat (online) or sleeping — an "idle"
   // frame (no heartbeat for 15-30 min) is treated as OFFLINE for the client so
   // a frame that lost Wi-Fi stops showing "online" ~15 min after it went quiet.
@@ -94,19 +93,19 @@ function frameStatusPayload(macRaw: string) {
   // paired/provisioned row. `0` IS a valid battery/tfused value, so guard with
   // null/undefined (??), never truthiness, to avoid masking a real 0.
   var liveBattery = rec?.battery != null ? rec.battery : paired?.battery;
-  var liveWifiRaw = rec?.wifiName || paired?.wifiSsid || data.device.room || "";
+  var liveWifiRaw = rec?.wifiName || paired?.wifiSsid || "";
   // The heartbeat reports wifi:"on"/"off" (a radio status flag, not an SSID) —
   // only use it when it looks like a real network name.
   var liveWifi =
     liveWifiRaw && liveWifiRaw !== "on" && liveWifiRaw !== "off"
       ? liveWifiRaw
-      : paired?.wifiSsid || data.device.room || "";
+      : paired?.wifiSsid || "";
   var liveStorageUsed =
     rec?.storageUsed != null
       ? rec.storageUsed
       : paired?.storageUsed != null
         ? paired.storageUsed
-        : Math.round(data.device.usedBytes / 1024 / 1024);
+        : 0;
   var liveStorageTotal =
     rec?.storageTotal != null
       ? rec.storageTotal
@@ -168,16 +167,16 @@ function frameStatusPayload(macRaw: string) {
     wifi_ssid: liveWifi || null,
     storage_used_mb: liveStorageUsed,
     storage_total_mb: liveStorageTotal,
-    photo_count: paired?.pendingQueue?.length ?? paired?.photoQueueDepth ?? data.device.photoCount ?? 0,
+    photo_count: paired?.pendingQueue?.length ?? paired?.photoQueueDepth ?? 0,
     mqtt_connected: frameReachable,
     api_mqtt_connected: apiMqtt,
     frame_mqtt_live: frameReachable,
     last_seen_ms: lastSeen,
     last_upload_ms: rec?.lastUploadMs ?? lastSeen,
     heartbeat_age_ms: ageMs,
-    heartbeat_interval_ms: FRAME_HEART_INTERVAL_MS,
-    online_grace_ms: HEARTBEAT_ONLINE_MS,
-    offline_grace_ms: HEARTBEAT_TIMEOUT_MS,
+    heartbeat_interval_ms: windows.interval,
+    online_grace_ms: windows.online,
+    offline_grace_ms: windows.timeout,
     // Configured sleep window (LOCAL wall-clock HH:mm) so clients can render a
     // "Scheduled wake-up at …" subtext under the In-Sleep-Mode badge.
     // Resolve the sleep window directly (the `ws`/`paired` references are in
