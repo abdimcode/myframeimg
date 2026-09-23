@@ -36,7 +36,7 @@ const recentSubDispatches = new Map<string, number>();
 /** Helper to record persistent in-app notifications into db.data.notifications */
 export function recordAppNotification(opts: {
   userId: string;
-  type: "photo_uploaded" | "playlist_started" | "member_joined";
+  type: "photo_uploaded" | "playlist_started" | "member_joined" | "photo_sent";
   title: string;
   body: string;
 }): void {

@@ -1,13 +1,21 @@
 import express, { Request, Response } from "express";
-import { requirePairingToken } from "../middleware/security";
+import { requirePairingToken, isPairingTokenValid } from "../middleware/security";
 import { db } from "../db/store";
+import { verifyUserJwtBearer } from "../services/app_user_jwt";
 import {
   frameMediaOrigin,
-  isDeviceSleeping,
   normalizeMac,
   resolveMqttHardwareMac,
 } from "../services/frame_mqtt";
 import { enqueuePush, getPushJob, pushStatus } from "../services/push_queue";
+import {
+  cancelOfflineItem,
+  dispatchReadiness,
+  enqueueOfflineItem,
+  getOfflineItem,
+  listOfflineQueue,
+  serializeItem,
+} from "../services/offline_queue";
 
 /**
  * Async image push queue routes. Mount at /api.
@@ -83,21 +91,38 @@ pushRouter.post("/v1/frames/:mac/push", requirePairingToken, (req: Request, res:
     return;
   }
 
-  // Sleep-mode guard: reject pushes to a frame that has powered down its radio
-  // for power saving. Sending now would only time out / get dropped, so return
-  // a clear conflict the client can surface as "Frame Asleep".
-  if (isDeviceSleeping(mac)) {
-    res.status(409).json({
-      ok: false,
-      success: false,
-      code: "FRAME_ASLEEP",
-      message: "Frame is currently in sleep mode. Push commands are blocked.",
+  // Offline queue: a frame that is asleep / offline / not heartbeating gets the
+  // push queued instead of a 409. It is replayed on the frame's next heartbeat
+  // and the client polls the same msgid (`waiting_offline` until then). The
+  // upload route may already have queued this exact image — enqueueOfflineItem
+  // dedupes on (mac, imgurl) so the client never creates a second copy.
+  const readiness = dispatchReadiness(mac);
+  if (!readiness.ready) {
+    const item = enqueueOfflineItem({
+      mac,
+      userId: verifyUserJwtBearer(req)?.userId,
+      type,
+      payload:
+        type === "single"
+          ? { imgid: imgs[0]!.imgid, imgurl: imgs[0]!.imgurl }
+          : { imageIds: imgs.map((i) => i.imgid) },
+    });
+    res.json({
+      ok: true,
+      success: true,
+      msgid: item._id,
+      status: "waiting_offline",
+      progress: 0,
+      queued: true,
+      queue_id: item._id,
+      frame_online: false,
+      offline_reason: readiness.reason ?? null,
     });
     return;
   }
 
   const job = enqueuePush(mac, type, imgs);
-  res.json({ ok: true, success: true, msgid: job.msgid, status: job.status, progress: job.progress });
+  res.json({ ok: true, success: true, msgid: job.msgid, status: job.status, progress: job.progress, queued: false, frame_online: true });
 });
 
 // Status polling is intentionally non-blocking-auth: msgid is a per-push
@@ -109,8 +134,46 @@ pushRouter.get("/v1/frames/:mac/push-status", (req: Request, res: Response) => {
     res.status(400).json({ ok: false, error: "missing_params" });
     return;
   }
+  // Offline-queue items share the msgid with the push job they eventually
+  // create. While still waiting (or re-queued after a timeout) report
+  // `waiting_offline` so clients show the amber "will cast when awake" state.
+  const item = getOfflineItem(mac, msgid);
+  if (item && item.status === "queued") {
+    res.json({
+      ok: true,
+      msgid: item._id,
+      status: "waiting_offline",
+      progress: 0,
+      type: item.type,
+      imgs: item.payload.imgurl ? [{ imgid: item.payload.imgid ?? item._id, imgurl: item.payload.imgurl }] : [],
+      queued: true,
+      attempts: item.attempts,
+      queuedAt: item.createdAt,
+      updatedAt: item.updatedAtMs,
+    });
+    return;
+  }
+  if (item && item.status === "cancelled") {
+    res.json({ ok: true, msgid: item._id, status: "cancelled", progress: 0, type: item.type, queued: true, updatedAt: item.updatedAtMs });
+    return;
+  }
   const job = pushStatus(mac, msgid);
   if (!job) {
+    if (item) {
+      // Dispatching item whose job is not visible yet (or a failed item).
+      const status = item.status === "failed" ? "failed" : item.status === "completed" ? "completed" : "dispatched";
+      res.json({
+        ok: true,
+        msgid: item._id,
+        status,
+        progress: status === "completed" ? 1 : status === "failed" ? 0 : 0.3,
+        type: item.type,
+        queued: true,
+        error: item.error ?? undefined,
+        updatedAt: item.updatedAtMs,
+      });
+      return;
+    }
     res.status(404).json({ ok: false, error: "job_not_found" });
     return;
   }
@@ -123,7 +186,61 @@ pushRouter.get("/v1/frames/:mac/push-status", (req: Request, res: Response) => {
     imgs: job.imgs,
     error: job.error ?? undefined,
     updatedAt: job.updatedAtMs,
+    queued: !!item,
   });
+});
+
+function queueAuthOk(req: Request): boolean {
+  return !!verifyUserJwtBearer(req) || isPairingTokenValid(req);
+}
+
+/** List the offline queue for a frame (pending first; `?all=1` includes recent terminal items). */
+pushRouter.get("/v1/frames/:mac/queue", (req: Request, res: Response) => {
+  if (!queueAuthOk(req)) {
+    res.status(401).json({ ok: false, error: "unauthorized" });
+    return;
+  }
+  const mac = toMac(String(req.params.mac ?? ""));
+  if (mac.length !== 12) {
+    res.status(400).json({ ok: false, error: "invalid_mac" });
+    return;
+  }
+  const includeTerminal = String(req.query.all ?? "") === "1";
+  const items = listOfflineQueue(mac, { includeTerminal });
+  const readiness = dispatchReadiness(mac);
+  res.json({
+    ok: true,
+    mac,
+    frame_online: readiness.ready,
+    offline_reason: readiness.ready ? null : readiness.reason ?? null,
+    pending: items.filter((i) => i.status === "queued" || i.status === "dispatching").length,
+    items: items.map(serializeItem),
+  });
+});
+
+/** Cancel a still-queued item. 409 when it was already handed to the frame. */
+pushRouter.delete("/v1/frames/:mac/queue/:id", (req: Request, res: Response) => {
+  if (!queueAuthOk(req)) {
+    res.status(401).json({ ok: false, error: "unauthorized" });
+    return;
+  }
+  const mac = toMac(String(req.params.mac ?? ""));
+  const id = String(req.params.id ?? "").trim();
+  if (mac.length !== 12 || !id) {
+    res.status(400).json({ ok: false, error: "missing_params" });
+    return;
+  }
+  const existing = getOfflineItem(mac, id);
+  if (!existing) {
+    res.status(404).json({ ok: false, error: "queue_item_not_found" });
+    return;
+  }
+  const cancelled = cancelOfflineItem(mac, id);
+  if (!cancelled) {
+    res.status(409).json({ ok: false, error: "not_cancellable", status: existing.status });
+    return;
+  }
+  res.json({ ok: true, item: serializeItem(cancelled) });
 });
 
 /** Also expose a single-job lookup helper for other routes. */

@@ -16,6 +16,7 @@ import {
   publishRetainedMqttConfig,
   resolveMqttHardwareMac,
 } from "../services/frame_mqtt";
+import { offlineQueueDepth } from "../services/offline_queue";
 
 export const framePairingRouter = Router();
 
@@ -168,6 +169,9 @@ function frameStatusPayload(macRaw: string) {
     storage_used_mb: liveStorageUsed,
     storage_total_mb: liveStorageTotal,
     photo_count: paired?.pendingQueue?.length ?? paired?.photoQueueDepth ?? 0,
+    // Photos/playlists accepted while this frame was offline, waiting for its
+    // next heartbeat (see services/offline_queue.ts).
+    offline_queue_depth: offlineQueueDepth(mac),
     mqtt_connected: frameReachable,
     api_mqtt_connected: apiMqtt,
     frame_mqtt_live: frameReachable,

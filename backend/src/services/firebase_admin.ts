@@ -16,6 +16,12 @@ type PushStrings = {
   guestPhotoBody: string;
   slideshowUpdatedTitle: string;
   slideshowUpdatedBody: (name: string) => string;
+  queuedDispatchedTitle: string;
+  queuedPhotoDispatchedBody: string;
+  queuedPlaylistDispatchedBody: string;
+  queuedCompletedTitle: string;
+  queuedPhotoCompletedBody: string;
+  queuedPlaylistCompletedBody: string;
 };
 
 const pushStringsEn: PushStrings = {
@@ -27,6 +33,12 @@ const pushStringsEn: PushStrings = {
   slideshowUpdatedTitle: "Playlist Updated",
   slideshowUpdatedBody: (name) =>
     `Frame "${name}" started playing new playlist.`,
+  queuedDispatchedTitle: "Frame is awake",
+  queuedPhotoDispatchedBody: "Your queued photo is being sent to the frame now.",
+  queuedPlaylistDispatchedBody: "Your queued playlist is being sent to the frame now.",
+  queuedCompletedTitle: "Queued photo displayed",
+  queuedPhotoCompletedBody: "The frame woke up and displayed your queued photo.",
+  queuedPlaylistCompletedBody: "The frame woke up and started your queued playlist.",
 };
 
 const pushStringsZh: PushStrings = {
@@ -37,6 +49,12 @@ const pushStringsZh: PushStrings = {
   guestPhotoBody: "有访客向您的相框分享了一张照片。",
   slideshowUpdatedTitle: "播放列表已更新",
   slideshowUpdatedBody: (name) => `相框「${name}」已开始轮播新照片。`,
+  queuedDispatchedTitle: "相框已唤醒",
+  queuedPhotoDispatchedBody: "正在将离线队列中的照片发送到相框。",
+  queuedPlaylistDispatchedBody: "正在将离线队列中的播放列表发送到相框。",
+  queuedCompletedTitle: "离线队列照片已显示",
+  queuedPhotoCompletedBody: "相框已上线并显示了您排队的照片。",
+  queuedPlaylistCompletedBody: "相框已上线并开始播放您排队的播放列表。",
 };
 
 function getPushStrings(lang?: string): PushStrings {

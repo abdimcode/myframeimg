@@ -46,6 +46,29 @@ const PLAYLIST_MAX_MS = 12 * 60_000;
 const fifoByMac = new Map<string, string[]>();
 const timers = new Map<string, ReturnType<typeof setTimeout>>();
 
+/**
+ * Listeners invoked whenever a job reaches a terminal status
+ * (`completed` / `failed` / `timeout_failed`). Used by the offline delivery
+ * queue to finalize (or re-queue) the item that produced the job.
+ */
+type TerminalListener = (mac: string, msgid: string, status: PushJobStatus) => void;
+const terminalListeners = new Set<TerminalListener>();
+
+export function onPushJobTerminal(listener: TerminalListener): () => void {
+  terminalListeners.add(listener);
+  return () => terminalListeners.delete(listener);
+}
+
+function notifyTerminal(mac: string, msgid: string, status: PushJobStatus): void {
+  for (const l of terminalListeners) {
+    try {
+      l(mac, msgid, status);
+    } catch (e) {
+      console.warn("[push-queue] terminal listener error", e);
+    }
+  }
+}
+
 function macKey(raw: string): string {
   return normalizeMac(raw).toUpperCase();
 }
@@ -96,13 +119,30 @@ export function enqueuePush(
   macRaw: string,
   type: "single" | "playlist",
   imgs: Array<{ imgid: string; imgurl: string; host?: string; port?: number }>,
+  opts?: { msgid?: string },
 ): PushJob {
   const mac = resolveMqttHardwareMac(macRaw) ?? normalizeMac(macRaw);
   const cleaned = imgs.map((i) => ({
     imgid: String(i.imgid ?? "").trim(),
     imgurl: String(i.imgurl ?? "").trim(),
   }));
-  const msgid = `${Date.now()}-${crypto.randomBytes(4).toString("hex")}`;
+  // A caller (offline queue) may pin the msgid so the client keeps polling the
+  // same id it received at upload time.
+  const preset = String(opts?.msgid ?? "").trim();
+  const msgid = preset || `${Date.now()}-${crypto.randomBytes(4).toString("hex")}`;
+  if (preset) {
+    const existing = getPushJob(mac, preset);
+    if (existing && ACTIVE_STATUSES.includes(existing.status)) return existing;
+    if (existing) {
+      // Re-dispatch after a timeout: drop the stale terminal job so the new
+      // attempt starts clean under the same msgid.
+      db.mutate((draft) => {
+        const jobs = ensureJobs(draft);
+        const key = macKey(mac);
+        jobs[key] = (jobs[key] || []).filter((j) => j.msgid !== preset);
+      });
+    }
+  }
   const job: PushJob = {
     msgid,
     mac,
@@ -206,6 +246,13 @@ async function dispatchNext(macRaw: string): Promise<void> {
       }
     });
     clearTimer(key, msgid);
+    // Unblock the FIFO so the next job can run, then advance.
+    const cur = fifoByMac.get(key) ?? [];
+    const idx = cur.indexOf(msgid);
+    if (idx >= 0) cur.splice(idx, 1);
+    fifoByMac.set(key, cur);
+    notifyTerminal(key, msgid, "failed");
+    void dispatchNext(key);
     return;
   }
 
@@ -217,6 +264,7 @@ function armTimer(key: string, msgid: string, delayMs?: number): void {
   clearTimer(key, msgid);
   const delay = Math.max(1, delayMs ?? TIMEOUT_MS);
   const t = setTimeout(() => {
+    let timedOut = false;
     db.mutate((draft) => {
       const jobs = ensureJobs(draft);
       const target = (jobs[key] || []).find((j) => j.msgid === msgid);
@@ -225,6 +273,7 @@ function armTimer(key: string, msgid: string, delayMs?: number): void {
         target.progress = Math.max(target.progress, 0.65);
         target.updatedAtMs = Date.now();
         target.timeoutAtMs = Date.now();
+        timedOut = true;
       }
     });
     // Unblock the queue: drop this job from FIFO head and dispatch next.
@@ -232,6 +281,7 @@ function armTimer(key: string, msgid: string, delayMs?: number): void {
     const idx = fifo.indexOf(msgid);
     if (idx >= 0) fifo.splice(idx, 1);
     fifoByMac.set(key, fifo);
+    if (timedOut) notifyTerminal(key, msgid, "timeout_failed");
     void dispatchNext(key);
   }, delay);
   // Use opts.unref so the timer does not hold the process open.
@@ -301,6 +351,7 @@ export function handleDownloadComplete(macRaw: string, msgid?: string, result?: 
     const idx = fifo.indexOf(failedMsgid);
     if (idx >= 0) fifo.splice(idx, 1);
     fifoByMac.set(key, fifo);
+    notifyTerminal(key, failedMsgid, "failed");
     void dispatchNext(key);
     return true;
   }
@@ -350,6 +401,7 @@ export function handlePlayAck(macRaw: string, msgid?: string): boolean {
   const idx = fifo.indexOf(completedMsgid);
   if (idx >= 0) fifo.splice(idx, 1);
   fifoByMac.set(key, fifo);
+  notifyTerminal(key, completedMsgid, "completed");
   void dispatchNext(key);
   return true;
 }
@@ -422,6 +474,7 @@ export function trackPlaylistPush(
   }
   if (!fifo.includes(msgid)) fifo.unshift(msgid);
   fifoByMac.set(key, fifo);
+  for (const old of superseded) notifyTerminal(key, old, "completed");
 
   // Safeguard: if the frame never renders (offline / command dropped), the
   // job still ends in `timeout_failed` instead of hanging at "Downloading".
@@ -522,6 +575,7 @@ export function handlePlaylistRenderAck(macRaw: string, ackMsgidRaw?: string): b
   const idx = fifo.indexOf(completedMsgid);
   if (idx >= 0) fifo.splice(idx, 1);
   fifoByMac.set(key, fifo);
+  notifyTerminal(key, completedMsgid, "completed");
   void dispatchNext(key);
   return true;
 }

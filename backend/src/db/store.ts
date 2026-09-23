@@ -114,6 +114,42 @@ export type PushJob = {
   error?: string;
 };
 
+/**
+ * Offline delivery queue: a photo/playlist accepted while the target frame was
+ * offline or asleep. Items wait in `queued` until the frame's next heartbeat,
+ * are handed to the push queue (`dispatching`, same msgid = `_id`), and end in
+ * `completed` / `failed` from the hardware ACK state machine.
+ */
+export type OfflineQueueStatus = "queued" | "dispatching" | "completed" | "failed" | "cancelled";
+
+export type OfflineQueueItem = {
+  /** Also used as the push-job msgid once dispatched, so clients poll one id. */
+  _id: string;
+  /** Canonical uppercase Wi-Fi STA MAC. */
+  mac: string;
+  userId: string;
+  type: "single" | "playlist";
+  payload: {
+    imgurl?: string;
+    imgid?: string;
+    strategy?: number;
+    path?: string;
+    imageIds?: string[];
+    intervalMinutes?: number;
+    idle?: number;
+    begintime?: string;
+    endtime?: string;
+  };
+  status: OfflineQueueStatus;
+  createdAt: number;
+  updatedAtMs: number;
+  dispatchedAtMs?: number;
+  completedAtMs?: number;
+  /** Number of dispatch attempts (a timed-out dispatch is re-queued). */
+  attempts: number;
+  error?: string;
+};
+
 export type MyframeDb = {
   organizations: Array<{
     id: string;
@@ -287,6 +323,8 @@ export type MyframeDb = {
   unboundFrames: string[];
   /** Async image-push queue jobs keyed by STA MAC (FIFO per device). */
   pushJobs?: Record<string, PushJob[]>;
+  /** Offline delivery queue keyed by STA MAC (oldest first per device). */
+  offlineQueue?: Record<string, OfflineQueueItem[]>;
   device: {
     id: string;
     name: string;
@@ -516,6 +554,7 @@ function createInitialDb(): MyframeDb {
     frames: [],
     unboundFrames: [],
     pushJobs: {},
+    offlineQueue: {},
     device: {
       id: "YX-133P-001",
       name: "MyFrame (Primary)",
@@ -603,6 +642,9 @@ function readDbRaw(): MyframeDb {
   }
   if (!parsed.pushJobs || typeof parsed.pushJobs !== "object") {
     parsed.pushJobs = {};
+  }
+  if (!parsed.offlineQueue || typeof parsed.offlineQueue !== "object") {
+    parsed.offlineQueue = {};
   }
   if (Array.isArray(parsed.frames)) {
     const fallbackOrgId = parsed.organizations[0]?.id ?? "org_default";

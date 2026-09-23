@@ -30,6 +30,14 @@ function pairingTokenFromRequest(req: Request): string {
   return (readBearerToken(req) ?? String(req.header("x-admin-token") ?? "")).trim();
 }
 
+/** Non-throwing pairing-token check for routes that also accept a user JWT. */
+export function isPairingTokenValid(req: Request): boolean {
+  const expected = String(process.env.FRAME_PAIRING_TOKEN ?? "").trim();
+  if (!expected) return true;
+  const got = pairingTokenFromRequest(req);
+  return !!got && secureEqual(got, expected);
+}
+
 export function requirePairingToken(req: Request, res: Response, next: NextFunction) {
   const expected = String(process.env.FRAME_PAIRING_TOKEN ?? "").trim();
   if (!expected) {

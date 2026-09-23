@@ -816,6 +816,11 @@ function handleMessage(topic: string, raw: Buffer) {
   if (action === "heart" || action === "login") {
     void import("./device_settings").then(m => m.flushDeviceSettings(mac))
       .catch(() => { /* persisted settings remain pending for next uplink */ });
+    // Offline delivery queue: the frame just proved it is awake, so hand it the
+    // oldest photo/playlist that was accepted while it was offline. Dynamic
+    // import avoids the circular dependency (offline_queue imports this file).
+    void import("./offline_queue").then(m => m.flushOfflineQueue(mac))
+      .catch((e) => { console.warn("[frame-mqtt] offline queue flush failed mac=%s", mac, e); });
   }
 
   switch (action) {

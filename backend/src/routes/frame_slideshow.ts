@@ -8,6 +8,7 @@ import { verifyUserJwtBearer } from "../services/app_user_jwt";
 import { stopPlaybackForMacKeys } from "../services/slideshow_stop";
 import { isRandomStrategy, seedCurrentIndex } from "../services/slideshow_index";
 import { trackPlaylistPush } from "../services/push_queue";
+import { dispatchReadiness, enqueueOfflineItem } from "../services/offline_queue";
 import {
   frameMediaOrigin,
   isMqttConnected,
@@ -17,22 +18,6 @@ import {
   resolveMqttHardwareMac,
   getFrame,
 } from "../services/frame_mqtt";
-
-/** Reject if the frame has not heartbeated recently (defensive offline guard). */
-function requireFrameOnline(macOrDeviceId: string, res: express.Response): boolean {
-  const mac = resolveMqttHardwareMac(macOrDeviceId) ?? macOrDeviceId;
-  const rec = getFrame(mac);
-  const MAX_AGE_MS = 15 * 60 * 1000; // 15 minutes — 1.5x the 10-min heartbeat interval
-  if (rec && rec.age > MAX_AGE_MS) {
-    res.status(409).json({
-      ok: false,
-      error: "FRAME_OFFLINE",
-      message: "The frame is currently offline and cannot receive new photos. Please check the frame\'s Wi-Fi connection.",
-    });
-    return false;
-  }
-  return true;
-}
 
 function normalizeMacKey(raw: string): string {
   try {
@@ -164,19 +149,8 @@ export function frameSlideshowRouter(uploadDir?: string): Router {
     }
 
     const macKey = normalizeMacKey(String(req.params.mac ?? ""));
-    {
-      const checkMac = resolveMqttHardwareMac(macKey) ?? macKey;
-      const rec = getFrame(checkMac);
-      const MAX_AGE_MS = 15 * 60 * 1000;
-      if (rec && rec.age > MAX_AGE_MS) {
-        res.status(409).json({
-          ok: false,
-          error: "FRAME_OFFLINE",
-          message: "The frame is currently offline and cannot receive a new playlist. Please check the frame\'s Wi-Fi connection.",
-        });
-        return;
-      }
-    }
+    // Offline frames no longer get a 409: the playlist is persisted and queued
+    // for the frame's next heartbeat (see `readiness` below).
     if (macKey.length < 8) {
       res.status(400).json({ ok: false, error: "invalid_mac", message: "MAC / device identifier too short" });
       return;
@@ -326,8 +300,30 @@ export function frameSlideshowRouter(uploadDir?: string): Router {
 
     // Set when this publish created a backend-tracked playlist push job.
     let trackedMsgid: string | undefined;
+    // Offline queue: set when the frame is not ready and the playlist was
+    // queued for its next heartbeat. The item id doubles as the msgid.
+    let queueId: string | undefined;
+    const readiness = publishMac && publishMac.length === 12 ? dispatchReadiness(publishMac) : null;
 
-    if (isMqttConnected()) {
+    if (readiness && !readiness.ready) {
+      const item = enqueueOfflineItem({
+        mac: publishMac,
+        userId: u?.userId,
+        type: "playlist",
+        payload: {
+          imageIds: ids,
+          intervalMinutes,
+          strategy: isRandomStrategy(strategy) ? 2 : 1,
+          idle,
+          begintime,
+          endtime,
+          path: `/api/v1/frames/manifest?mac=${publishMac}`,
+        },
+      });
+      queueId = item._id;
+      trackedMsgid = item._id;
+      console.log("[slideshow] frame not ready (%s) — playlist queued mac=%s id=%s ids=%d", readiness.reason, publishMac, item._id, ids.length);
+    } else if (isMqttConnected()) {
       if (publishMac) {
         // Command msgid doubles as the tracked push-job msgid the client polls,
         // so the playlist banner can observe the firmware's first-render ACK.
@@ -384,7 +380,8 @@ export function frameSlideshowRouter(uploadDir?: string): Router {
       console.warn("[slideshow] strategy_bin skipped (mqtt offline)", macKey);
     }
 
-    if (claimNotification("playlist:" + macKey + ":" + JSON.stringify(ids))) {
+    // Queued playlists notify when the frame actually starts them (offline_queue).
+    if (!queueId && claimNotification("playlist:" + macKey + ":" + JSON.stringify(ids))) {
       sendLocalizedPushToFrameSubscribers(macKey, (s) => ({
         title: s.photoUploadedTitle,
         body: ids.length + " photos added to playlist",
@@ -402,6 +399,8 @@ export function frameSlideshowRouter(uploadDir?: string): Router {
       idle,
       skipPlay,
       ...(trackedMsgid ? { msgid: trackedMsgid } : {}),
+      queued: !!queueId,
+      ...(queueId ? { queue_id: queueId, delivery_mode: "queued_offline", frame_online: false, offline_reason: readiness?.reason ?? null } : {}),
     });
   });
 

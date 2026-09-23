@@ -9,7 +9,7 @@ import path from "path";
 import { db } from "../db/store";
 import { requirePairingToken, uploadRateLimit } from "../middleware/security";
 import { verifyUserJwtBearer, platformFromRequest } from "../services/app_user_jwt";
-import { isMqttConnected, frameMediaOrigin, publishPlayImage, publishStrategyCommand, resolveFrameMediaUrl, resolveMqttHardwareMac, getFrame } from "../services/frame_mqtt";
+import { frameMediaOrigin, publishPlayImage, publishStrategyCommand, resolveFrameMediaUrl, resolveMqttHardwareMac } from "../services/frame_mqtt";
 import { sendLocalizedPushToFrameSubscribers } from "../services/firebase_admin";
 import {
   enqueueUpload,
@@ -25,22 +25,48 @@ import {
   writeMyfmSidecar,
   XT_BIN_TOTAL_BYTES,
 } from "../services/myfm_encode";
+import { dispatchReadiness, enqueueOfflineItem } from "../services/offline_queue";
 
+/**
+ * Offline-queue delivery decision shared by the upload handlers.
+ *
+ * Uploads are accepted regardless of frame presence. When the frame is not
+ * ready to receive a command right now (offline, asleep, stale heartbeat or
+ * broker down) the encoded image is queued and replayed on the frame's next
+ * heartbeat; the response carries `queued: true` + the `msgid` the client
+ * polls via push-status (`waiting_offline` -> `dispatched` -> ... ).
+ */
+type UploadDelivery = {
+  deliveredToFrame: boolean;
+  deliveryMode: string;
+  queued: boolean;
+  queueId: string | null;
+  frameOnline: boolean;
+  offlineReason: string | null;
+};
 
-/** Reject if the frame has not heartbeated recently (defensive offline guard). */
-function requireFrameOnline(macOrDeviceId: string, res: express.Response): boolean {
-  const mac = resolveMqttHardwareMac(macOrDeviceId) ?? macOrDeviceId;
-  const rec = getFrame(mac);
-  const MAX_AGE_MS = 15 * 60 * 1000; // 15 minutes — 1.5x the 10-min heartbeat interval
-  if (rec && rec.age > MAX_AGE_MS) {
-    res.status(409).json({
-      ok: false,
-      error: "FRAME_OFFLINE",
-      message: "The frame is currently offline and cannot receive new photos. Please check the frame\'s Wi-Fi connection.",
-    });
-    return false;
-  }
-  return true;
+function queueUploadForOfflineFrame(
+  mac: string,
+  imageUrl: string,
+  imgid: string,
+  userId: string | undefined,
+  reason: string,
+): UploadDelivery {
+  const item = enqueueOfflineItem({
+    mac,
+    userId,
+    type: "single",
+    payload: { imgid, imgurl: imageUrl },
+  });
+  console.log("[photo] frame not ready (%s) — queued mac=%s id=%s", reason, mac, item._id);
+  return {
+    deliveredToFrame: false,
+    deliveryMode: "queued_offline",
+    queued: true,
+    queueId: item._id,
+    frameOnline: false,
+    offlineReason: reason,
+  };
 }
 /**
  * POST /api/photo/upload
@@ -190,14 +216,28 @@ export function photoRouter(uploadDir: string, publicBaseUrl: string) {
       let deliveredToFrame = false;
       let deliveryMode = "stored_only";
       let queued = false;
+      let queueId: string | null = null;
+      let frameOnline: boolean | null = null;
+      let offlineReason: string | null = null;
       let mqttMacForUpload: string | null = null;
       if (!skipPlay) {
         mqttMacForUpload = resolveMqttHardwareMac(deviceId);
         if (mqttMacForUpload) {
-          if (!isMqttConnected()) {
-            deliveryMode = "mqtt_disconnected";
-            enqueueUpload(deviceId, uploadId);
-            queued = true;
+          const readiness = dispatchReadiness(mqttMacForUpload);
+          frameOnline = readiness.ready;
+          if (!readiness.ready) {
+            const d = queueUploadForOfflineFrame(
+              mqttMacForUpload,
+              imageUrl,
+              uploadId,
+              verifyUserJwtBearer(req)?.userId,
+              readiness.reason ?? "not_ready",
+            );
+            deliveredToFrame = d.deliveredToFrame;
+            deliveryMode = d.deliveryMode;
+            queued = d.queued;
+            queueId = d.queueId;
+            offlineReason = d.offlineReason;
           } else if (!isDeliverySlotFree(deviceId)) {
             deliveryMode = "queued_slot_busy";
             enqueueUpload(deviceId, uploadId);
@@ -288,7 +328,8 @@ export function photoRouter(uploadDir: string, publicBaseUrl: string) {
       });
 
       // Playlist clients announce completion once after publishing the full batch.
-      if (source !== "playlist" && claimNotification("photo:" + (deviceId || db.read().device.id) + ":" + mqttBasename)) {
+      // Queued-offline uploads notify when the frame actually displays them.
+      if (source !== "playlist" && !queueId && claimNotification("photo:" + (deviceId || db.read().device.id) + ":" + mqttBasename)) {
         // Quota banking: client reports a granted wx subscription on this upload.
         if (String(req.body.subscription_granted ?? "") === "true") {
           incrementWechatMessageQuota(verifyUserJwtBearer(req)?.userId);
@@ -337,6 +378,11 @@ export function photoRouter(uploadDir: string, publicBaseUrl: string) {
         delivered_to_frame: deliveredToFrame,
         delivery_mode: deliveryMode,
         queued: queued,
+        /** Offline queue: poll push-status with this msgid (`waiting_offline` until the frame wakes). */
+        queue_id: queueId,
+        msgid: queueId ?? undefined,
+        frame_online: frameOnline,
+        offline_reason: offlineReason,
         image_url: imageUrl,
         /** `client_passthrough` = exact bytes from iOS/Flutter `.bin`; never re-dithered on VPS. */
         image_processing: imageProcessing,
@@ -350,7 +396,8 @@ export function photoRouter(uploadDir: string, publicBaseUrl: string) {
   });
 
   async function handleFrameUpload(req: express.Request, res: express.Response, deviceId: string) {
-  if (!requireFrameOnline(deviceId, res)) return;
+    // No offline rejection here: offline frames get the upload queued (see
+    // dispatchReadiness / enqueueOfflineItem below) and replayed on heartbeat.
     try {
       const file = req.file;
       if (!file) {
@@ -454,14 +501,28 @@ export function photoRouter(uploadDir: string, publicBaseUrl: string) {
       let deliveredToFrame = false;
       let deliveryMode = "stored_only";
       let queued = false;
+      let queueId: string | null = null;
+      let frameOnline: boolean | null = null;
+      let offlineReason: string | null = null;
       let mqttMacForUpload: string | null = null;
       if (!skipPlay) {
         mqttMacForUpload = resolveMqttHardwareMac(deviceId);
         if (mqttMacForUpload) {
-          if (!isMqttConnected()) {
-            deliveryMode = "mqtt_disconnected";
-            enqueueUpload(deviceId, uploadId);
-            queued = true;
+          const readiness = dispatchReadiness(mqttMacForUpload);
+          frameOnline = readiness.ready;
+          if (!readiness.ready) {
+            const d = queueUploadForOfflineFrame(
+              mqttMacForUpload,
+              imageUrl,
+              uploadId,
+              verifyUserJwtBearer(req)?.userId,
+              readiness.reason ?? "not_ready",
+            );
+            deliveredToFrame = d.deliveredToFrame;
+            deliveryMode = d.deliveryMode;
+            queued = d.queued;
+            queueId = d.queueId;
+            offlineReason = d.offlineReason;
           } else if (!isDeliverySlotFree(deviceId)) {
             deliveryMode = "queued_slot_busy";
             enqueueUpload(deviceId, uploadId);
@@ -551,7 +612,7 @@ export function photoRouter(uploadDir: string, publicBaseUrl: string) {
         });
       });
 
-      if (source !== "playlist" && claimNotification("photo:" + (deviceId || db.read().device.id) + ":" + mqttBasename)) {
+      if (source !== "playlist" && !queueId && claimNotification("photo:" + (deviceId || db.read().device.id) + ":" + mqttBasename)) {
         // Quota banking: client reports a granted wx subscription on this upload.
         if (String(req.body.subscription_granted ?? "") === "true") {
           incrementWechatMessageQuota(verifyUserJwtBearer(req)?.userId);
@@ -596,6 +657,10 @@ export function photoRouter(uploadDir: string, publicBaseUrl: string) {
         delivered_to_frame: deliveredToFrame,
         delivery_mode: deliveryMode,
         queued: queued,
+        queue_id: queueId,
+        msgid: queueId ?? undefined,
+        frame_online: frameOnline,
+        offline_reason: offlineReason,
         image_url: imageUrl,
         image_processing: imageProcessing,
       });
@@ -694,7 +759,6 @@ export function photoRouter(uploadDir: string, publicBaseUrl: string) {
     if (!mac) {
       res.status(400).json({ ok: false, error: "invalid_mac" });
       return;
-    if (!requireFrameOnline(mac ?? "", res)) return;
     }
     const body = (req.body ?? {}) as {
       photo_ids?: unknown;

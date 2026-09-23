@@ -37,6 +37,7 @@ import { isGoogleOAuthRedirectConfigured } from "./services/google_oauth_mobile"
 import { startFrameMqtt } from "./services/frame_mqtt";
 import { pushRouter } from "./routes/push_routes";
 import { seedPushQueue } from "./services/push_queue";
+import { startOfflineQueue } from "./services/offline_queue";
 
 /** PM2 often sets `cwd` to the repo root; default dotenv loads `.env` there and misses `backend/.env`. */
 const packageRoot = path.resolve(__dirname, "..");
@@ -215,6 +216,9 @@ const server = app.listen(port, () => {
     /* ignore */
   }
   seedPushQueue();
+  // Offline delivery queue: wires the push-queue completion hook and starts the
+  // 60s sweeper that replays queued items for frames that are already awake.
+  startOfflineQueue();
   startFrameMqtt();
 });
 
