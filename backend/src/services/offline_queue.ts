@@ -85,11 +85,17 @@ export function dispatchReadiness(macRaw: string): DispatchReadiness {
   const row = frameRow(mac);
   const version = rec?.firmwareVersion ?? row?.firmwareVersion;
   const windows = frameHeartbeatWindows(version);
+  // `lastSeenAtMs` is touched by upload routes, so it is NOT trusted for
+  // readiness (a blind publish to an offline frame is lost; a queued item is
+  // not). It is only consulted to label legacy rows that predate
+  // `lastHeartbeatAtMs` as stale rather than never seen.
   const lastSeen = Math.max(rec?.lastSeen ?? 0, row?.lastHeartbeatAtMs ?? 0);
   const ageMs = lastSeen > 0 ? Date.now() - lastSeen : null;
   const base = { ageMs, onlineWindowMs: windows.online };
   if (!isMqttConnected()) return { ready: false, reason: "mqtt_disconnected", ...base };
-  if (ageMs == null) return { ready: false, reason: "never_seen", ...base };
+  if (ageMs == null) {
+    return { ready: false, reason: (row?.lastSeenAtMs ?? 0) > 0 ? "stale_heartbeat" : "never_seen", ...base };
+  }
   if (ageMs < 0 || ageMs >= windows.online) return { ready: false, reason: "stale_heartbeat", ...base };
   if (isDeviceSleeping(mac)) return { ready: false, reason: "sleeping", ...base };
   return { ready: true, ...base };
