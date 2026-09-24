@@ -128,6 +128,10 @@ function sameTarget(a: OfflineQueueItem, input: EnqueueInput): boolean {
  * Persist a queued item for a frame. Idempotent for an identical still-queued
  * target (e.g. the upload route AND the client's follow-up `/push` call both
  * try to queue the same image) — the existing item is returned.
+ *
+ * Latest wins: older still-queued items of the same type are marked
+ * `superseded` — when the frame wakes it must show the newest photo /
+ * playlist once, not flash through everything queued while it slept.
  */
 export function enqueueOfflineItem(input: EnqueueInput): OfflineQueueItem {
   const mac = macKey(input.mac);
@@ -140,6 +144,13 @@ export function enqueueOfflineItem(input: EnqueueInput): OfflineQueueItem {
     if (dup) {
       result = dup;
       return;
+    }
+    for (const older of list) {
+      if (older.status === "queued" && older.type === input.type) {
+        older.status = "superseded";
+        older.updatedAtMs = now;
+        older.error = "superseded_by_newer";
+      }
     }
     const item: OfflineQueueItem = {
       _id: `${now}-${crypto.randomBytes(4).toString("hex")}`,
@@ -168,7 +179,7 @@ export function enqueueOfflineItem(input: EnqueueInput): OfflineQueueItem {
 }
 
 export function isTerminal(status: OfflineQueueItem["status"]): boolean {
-  return status === "completed" || status === "failed" || status === "cancelled";
+  return status === "completed" || status === "failed" || status === "cancelled" || status === "superseded";
 }
 
 export function getOfflineItem(macRaw: string, id: string): OfflineQueueItem | null {
@@ -238,8 +249,25 @@ export async function flushOfflineQueue(macRaw: string): Promise<OfflineQueueIte
     if (items.some((i) => i.status === "dispatching")) return null;
     const readiness = dispatchReadiness(mac);
     if (!readiness.ready) return null;
-    const next = items.find((i) => i.status === "queued");
+    // Latest only: the frame just woke up — cast the NEWEST queued item
+    // (single or playlist) and mark everything older as superseded so the
+    // panel refreshes once instead of cycling through the whole backlog.
+    const queued = items.filter((i) => i.status === "queued").sort((a, b) => b.createdAt - a.createdAt);
+    const next = queued[0];
     if (!next) return null;
+    if (queued.length > 1) {
+      const olderIds = new Set(queued.slice(1).map((i) => i._id));
+      db.mutate((draft) => {
+        for (const i of ensureQueue(draft)[mac] ?? []) {
+          if (olderIds.has(i._id) && i.status === "queued") {
+            i.status = "superseded";
+            i.updatedAtMs = Date.now();
+            i.error = "superseded_on_wake";
+          }
+        }
+      });
+      console.log("[offline-queue] mac=%s superseded %d older item(s); dispatching latest %s", mac, olderIds.size, next._id);
+    }
     return await dispatchItem(next);
   } finally {
     inflight.delete(mac);
@@ -340,7 +368,7 @@ function reconcile(mac: string): void {
       });
       continue;
     }
-    if (job.status === "completed" || job.status === "failed" || job.status === "timeout_failed") {
+    if (job.status === "completed" || job.status === "failed" || job.status === "timeout_failed" || job.status === "superseded") {
       finalizeFromJob(mac, item._id, job.status);
     }
   }
@@ -350,7 +378,10 @@ function finalizeFromJob(mac: string, msgid: string, status: PushJobStatus): voi
   let completed: OfflineQueueItem | null = null;
   updateItem(mac, msgid, (i) => {
     if (i.status !== "dispatching") return;
-    if (status === "completed") {
+    if (status === "superseded") {
+      i.status = "superseded";
+      i.error = "superseded_by_newer_push";
+    } else if (status === "completed") {
       i.status = "completed";
       i.completedAtMs = Date.now();
       completed = i;

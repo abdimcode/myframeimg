@@ -399,6 +399,7 @@ export function frameSlideshowRouter(uploadDir?: string): Router {
       idle,
       skipPlay,
       ...(trackedMsgid ? { msgid: trackedMsgid } : {}),
+      push_status: queueId ? "waiting_offline" : (trackedMsgid ? "dispatched" : null),
       queued: !!queueId,
       ...(queueId ? { queue_id: queueId, delivery_mode: "queued_offline", frame_online: false, offline_reason: readiness?.reason ?? null } : {}),
     });

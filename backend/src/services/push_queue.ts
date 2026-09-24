@@ -154,22 +154,53 @@ export function enqueuePush(
     updatedAtMs: Date.now(),
   };
 
+  const key = macKey(mac);
+  // Latest wins for single images: an e-ink panel can only show one photo, so
+  // a new single push must not wait (up to 180s) behind an earlier job that is
+  // still awaiting play_ack — supersede every in-flight job and go now.
+  const superseded: string[] = [];
   db.mutate((draft) => {
     const jobs = ensureJobs(draft);
-    const key = macKey(mac);
     if (!jobs[key]) jobs[key] = [];
+    if (type === "single") {
+      for (const j of jobs[key]) {
+        if (!ACTIVE_STATUSES.includes(j.status)) continue;
+        j.status = "superseded";
+        j.updatedAtMs = Date.now();
+        superseded.push(j.msgid);
+      }
+    }
     jobs[key].push(job);
   });
 
   // Mirror FIFO head order in memory.
-  const key = macKey(mac);
-  const fifo = fifoByMac.get(key) ?? [];
+  const fifo = (fifoByMac.get(key) ?? []).filter((m) => !superseded.includes(m));
   if (!fifo.includes(msgid)) fifo.push(msgid);
   fifoByMac.set(key, fifo);
+  for (const old of superseded) {
+    clearTimer(key, old);
+    notifyTerminal(key, old, "superseded");
+  }
 
   // Kick the worker (only dispatches when the MAC is idle).
   void dispatchNext(mac);
   return job;
+}
+
+/**
+ * [enqueuePush] and wait for the dispatch attempt so the caller can report the
+ * real post-dispatch status (`dispatched` vs `queued` behind an active playlist,
+ * or `failed`) instead of the always-`queued` snapshot taken before the worker ran.
+ */
+export async function enqueuePushAndDispatch(
+  macRaw: string,
+  type: "single" | "playlist",
+  imgs: Array<{ imgid: string; imgurl: string; host?: string; port?: number }>,
+  opts?: { msgid?: string },
+): Promise<PushJob> {
+  const job = enqueuePush(macRaw, type, imgs, opts);
+  await dispatchNext(job.mac);
+  return getPushJob(job.mac, job.msgid) ?? job;
 }
 
 /** Build + publish the MQTT `play` payload for a set of images. */
