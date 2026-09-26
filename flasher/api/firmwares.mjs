@@ -17,9 +17,13 @@ import { isValidFirmwareName } from './_lib/blob.mjs';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
+import { pipeline } from 'node:stream/promises';
+import { Transform } from 'node:stream';
+import { createHash, randomUUID } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 
 const MAX_UPLOAD = 100 * 1024 * 1024; // 100 MB hard cap (mirrors prior blob cap)
-const FIRMWARE_DIR = path.join(process.cwd(), 'public', 'firmware');
+const FIRMWARE_DIR = fileURLToPath(new URL('../public/firmware/', import.meta.url));
 
 function versionKey(name) {
   const m = name.toLowerCase().match(/fw[-_.]?(\d+(?:\.\d+)+)/);
@@ -107,49 +111,57 @@ export default handler(async (req, res) => {
 
     fs.mkdirSync(FIRMWARE_DIR, { recursive: true });
 
-    const writeStream = fs.createWriteStream(targetPath, { mode: 0o644 });
+    // Only completed files enter the directory-backed registry. A failed
+    // replacement must leave the previously registered firmware intact.
+    const tempPath = path.join(FIRMWARE_DIR, '.' + randomUUID() + '.upload');
+    const hash = createHash('sha256');
     let bytesWritten = 0;
-    let aborted = false;
-
-    const onAbort = () => {
-      if (aborted) return;
-      aborted = true;
-      console.warn('[api] firmware upload aborted mid-stream for ' + name);
-      req.destroy();
-      writeStream.destroy();
-      fsp.unlink(targetPath).catch(() => {});
-    };
-
-    req.on('aborted', onAbort);
-    res.on('close', () => { if (!res.writableEnded) onAbort(); });
-
-    req.on('data', (chunk) => { bytesWritten += chunk.length; });
-
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 300000);
+    const onClose = () => { if (!res.writableEnded) controller.abort(); };
+    res.once('close', onClose);
     try {
-      await new Promise((resolve, reject) => {
-        req.pipe(writeStream);
-        writeStream.on('finish', resolve);
-        writeStream.on('error', reject);
-        req.on('error', reject);
+      await pipeline(req, new Transform({
+        transform(chunk, _encoding, callback) {
+          bytesWritten += chunk.length;
+          if (bytesWritten > MAX_UPLOAD) return callback(new Error('payload too large'));
+          hash.update(chunk);
+          callback(null, chunk);
+        },
+      }), fs.createWriteStream(tempPath, { flags: 'wx', mode: 0o644 }),
+      { signal: controller.signal });
+      if (bytesWritten !== declaredLen) throw new Error('incomplete upload');
+      if (force) await fsp.rename(tempPath, targetPath);
+      else {
+        // Atomic no-overwrite registration, including simultaneous uploads.
+        await fsp.link(tempPath, targetPath);
+        await fsp.unlink(tempPath);
+      }
+      const st = await fsp.stat(targetPath);
+      console.log('[api] firmware uploaded: ' + name + ' · ' + bytesWritten + ' B');
+      return json(res, 200, {
+        ok: true, success: true, name, path: '/firmware/' + name, size: st.size,
+        source: {
+          id: name, filename: name,
+          version: name.match(/V[0-9]+(?:_[A-Za-z0-9]+)?/i)?.[0] || null,
+          size: st.size, sha256: hash.digest('hex'),
+          url: 'firmware/' + name, uploadedAt: st.mtime.toISOString(),
+        },
       });
     } catch (e) {
-      try { await fsp.unlink(targetPath); } catch {}
+      await fsp.unlink(tempPath).catch(() => {});
       console.error('[api] firmware upload failed for ' + name + ': ' + e.message);
-      return json(res, 500, { error: 'upload failed: ' + e.message });
+      if (!res.destroyed && !res.headersSent) {
+        return json(res, e.code === 'EEXIST' ? 409 : 500, {
+          error: 'upload failed: ' + e.message,
+          code: e.code === 'EEXIST' ? 'FIRMWARE_EXISTS' : 'UPLOAD_FAILED',
+        });
+      }
+    } finally {
+      clearTimeout(timer);
+      res.removeListener('close', onClose);
     }
-
-    if (aborted) return json(res, 499, { error: 'client disconnected' });
-
-    try { fs.chmodSync(targetPath, 0o644); }
-    catch (e) { console.warn('[api] chmod 644 failed for ' + name + ': ' + e.message); }
-
-    console.log('[api] firmware uploaded: ' + name + ' · ' + bytesWritten + ' B → ' + targetPath);
-    return json(res, 200, {
-      ok: true,
-      name: name,
-      path: '/firmware/' + name,
-      size: bytesWritten,
-    });
+    return;
   }
 
   if (req.method === 'DELETE') {

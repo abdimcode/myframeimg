@@ -313,11 +313,15 @@ function suggestNewWoId() {
 }
 suggestNewWoId();
 
-async function loadFirmwareOptions() {
+async function loadFirmwareOptions(throwOnError = false) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30000);
   try {
-    const res = await fetch(SERVER + '/firmwares');
+    const res = await fetch(SERVER + '/firmwares', { cache: 'no-store', signal: controller.signal });
+    if (!res.ok) throw new Error('HTTP ' + res.status + ': ' + await res.text());
     const body = await res.json();
-    const firmwares = body.firmwares || [];
+    if (!Array.isArray(body.firmwares)) throw new Error('Invalid firmware list response');
+    const firmwares = body.firmwares;
     // Build-package "固件" dropdown — every firmware, tagged by source.
     const sel = $('fwName');
     sel.innerHTML = '';
@@ -333,6 +337,9 @@ async function loadFirmwareOptions() {
     log(`Firmware sources · ${firmwares.length} total (${firmwares.filter((f) => f.source === 'blob').length} uploaded, ${firmwares.filter((f) => f.source === 'disk').length} built-in)`);
   } catch (e) {
     log(`Firmware scan failed: ${e.message}`);
+    if (throwOnError) throw e;
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -403,6 +410,7 @@ async function uploadFirmware(file) {
     const xhr = new XMLHttpRequest();
     const url = SERVER + '/firmwares?name=' + encodeURIComponent(file.name) + (force ? '&force=1' : '');
     xhr.open('POST', url);
+    xhr.timeout = 360000;
     xhr.setRequestHeader('Authorization', 'Bearer ' + token);
     xhr.setRequestHeader('Content-Type', 'application/octet-stream');
     xhr.upload.onprogress = (e) => {
@@ -415,9 +423,13 @@ async function uploadFirmware(file) {
       let body = {};
       try { body = JSON.parse(xhr.responseText || '{}'); } catch {}
       if (xhr.status >= 200 && xhr.status < 300) {
+        if (!body.ok || body.name !== file.name || body.size !== file.size) {
+          reject(new Error('Invalid upload completion response'));
+          return;
+        }
         resolve(body);
       } else {
-        const err = new Error(body.error || ('HTTP ' + xhr.status));
+        const err = new Error(body.error || ('HTTP ' + xhr.status + ': ' + xhr.responseText.slice(0, 500)));
         err.status = xhr.status;
         err.code = body.code;
         err.body = body;
@@ -426,6 +438,7 @@ async function uploadFirmware(file) {
     };
     xhr.onerror = () => reject(new Error('network error'));
     xhr.onabort = () => reject(new Error('upload aborted'));
+    xhr.ontimeout = () => reject(new Error('Upload timed out. Refresh firmware sources before retrying.'));
     xhr.send(file);
   });
 
@@ -451,7 +464,7 @@ async function uploadFirmware(file) {
     status.textContent = '\u2713 ' + file.name + ' \u00b7 ' + (result.size || file.size).toLocaleString() + ' B';
     log('\u2713 Uploaded firmware ' + file.name + ' (' + (result.size || file.size).toLocaleString() + ' B) \u2192 ' +
         (result.path || ('/firmware/' + file.name)));
-    await loadFirmwareOptions();
+    await loadFirmwareOptions(true);
     const fwSel = $('fwName');
     if (fwSel) {
       const opt = Array.from(fwSel.options).find((o) => o.value === file.name);
