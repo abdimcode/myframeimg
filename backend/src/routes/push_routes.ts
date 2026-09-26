@@ -13,6 +13,7 @@ import {
   dispatchReadiness,
   enqueueOfflineItem,
   getOfflineItem,
+  supersedePending,
   listOfflineQueue,
   serializeItem,
 } from "../services/offline_queue";
@@ -121,6 +122,7 @@ pushRouter.post("/v1/frames/:mac/push", requirePairingToken, (req: Request, res:
     return;
   }
 
+  supersedePending(mac);
   const job = enqueuePush(mac, type, imgs);
   res.json({ ok: true, success: true, msgid: job.msgid, status: job.status, progress: job.progress, queued: false, frame_online: true });
 });
@@ -153,8 +155,8 @@ pushRouter.get("/v1/frames/:mac/push-status", (req: Request, res: Response) => {
     });
     return;
   }
-  if (item && item.status === "cancelled") {
-    res.json({ ok: true, msgid: item._id, status: "cancelled", progress: 0, type: item.type, queued: true, updatedAt: item.updatedAtMs });
+  if (item && (item.status === "cancelled" || item.status === "superseded")) {
+    res.json({ ok: true, msgid: item._id, status: item.status, progress: 0, type: item.type, queued: true, updatedAt: item.updatedAtMs });
     return;
   }
   const job = pushStatus(mac, msgid);

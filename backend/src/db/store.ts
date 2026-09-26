@@ -120,7 +120,7 @@ export type PushJob = {
  * are handed to the push queue (`dispatching`, same msgid = `_id`), and end in
  * `completed` / `failed` from the hardware ACK state machine.
  */
-export type OfflineQueueStatus = "queued" | "dispatching" | "completed" | "failed" | "cancelled";
+export type OfflineQueueStatus = "superseded" | "queued" | "dispatching" | "completed" | "failed" | "cancelled";
 
 export type OfflineQueueItem = {
   /** Also used as the push-job msgid once dispatched, so clients poll one id. */
@@ -279,6 +279,7 @@ export type MyframeDb = {
     /** Last reported OTA progress (0–100) or status string from the device. */
     lastOtaProgress?: number | string | null;
     sleepConfig?: { enabled: boolean; startTime: string; endTime: string; timezoneOffsetMinutes?: number };
+    defaultSleepInitializedAtMs?: number;
     settingsRevision?: number;
     settingsPending?: { sleep?: number; playback?: number };
     playbackConfig?: { idle?: number; intervalMinutes: number; mode: "sequential" | "random"; durationHours: number };

@@ -8,7 +8,7 @@ import { verifyUserJwtBearer } from "../services/app_user_jwt";
 import { stopPlaybackForMacKeys } from "../services/slideshow_stop";
 import { isRandomStrategy, seedCurrentIndex } from "../services/slideshow_index";
 import { trackPlaylistPush } from "../services/push_queue";
-import { dispatchReadiness, enqueueOfflineItem } from "../services/offline_queue";
+import { dispatchReadiness, enqueueOfflineItem, supersedePending } from "../services/offline_queue";
 import {
   frameMediaOrigin,
   isMqttConnected,
@@ -305,6 +305,7 @@ export function frameSlideshowRouter(uploadDir?: string): Router {
     let queueId: string | undefined;
     const readiness = publishMac && publishMac.length === 12 ? dispatchReadiness(publishMac) : null;
 
+    if (readiness?.ready) supersedePending(publishMac);
     if (readiness && !readiness.ready) {
       const item = enqueueOfflineItem({
         mac: publishMac,

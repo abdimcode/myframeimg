@@ -25,7 +25,7 @@ import {
   writeMyfmSidecar,
   XT_BIN_TOTAL_BYTES,
 } from "../services/myfm_encode";
-import { dispatchReadiness, enqueueOfflineItem } from "../services/offline_queue";
+import { dispatchReadiness, enqueueOfflineItem, supersedePending } from "../services/offline_queue";
 
 /**
  * Offline-queue delivery decision shared by the upload handlers.
@@ -238,11 +238,8 @@ export function photoRouter(uploadDir: string, publicBaseUrl: string) {
             queued = d.queued;
             queueId = d.queueId;
             offlineReason = d.offlineReason;
-          } else if (!isDeliverySlotFree(deviceId)) {
-            deliveryMode = "queued_slot_busy";
-            enqueueUpload(deviceId, uploadId);
-            queued = true;
           } else {
+            supersedePending(mqttMacForUpload);
             let publicHost = "";
             try {
               publicHost = new URL(process.env.PUBLIC_MEDIA_BASE_URL || base).hostname;
@@ -254,11 +251,14 @@ export function photoRouter(uploadDir: string, publicBaseUrl: string) {
               await publishPlayImage(deviceId, imageUrl, publicHost || undefined);
               deliveredToFrame = true;
               deliveryMode = "vps_mqtt";
-              scheduleNextDelivery(deviceId);
+
             } catch (err) {
               console.error("[photo] MQTT play publish failed:", err);
               deliveryMode = "mqtt_publish_failed";
-              enqueueUpload(deviceId, uploadId);
+              const fallback = queueUploadForOfflineFrame(mqttMacForUpload, imageUrl, uploadId, verifyUserJwtBearer(req)?.userId, "mqtt_publish_failed");
+              queueId = fallback.queueId;
+              deliveryMode = fallback.deliveryMode;
+              offlineReason = "mqtt_publish_failed";
               queued = true;
             }
           }
@@ -269,9 +269,6 @@ export function photoRouter(uploadDir: string, publicBaseUrl: string) {
         if (!skipPlay && mqttMacForUpload && draft.slideshowsByBleMac?.[mqttMacForUpload]) {
           delete draft.slideshowsByBleMac[mqttMacForUpload];
         }
-        draft.device.connected = true;
-        draft.device.transport.wifi = transport === "wifi" || draft.device.transport.wifi;
-        draft.device.transport.bluetooth = transport === "bluetooth" || draft.device.transport.bluetooth;
         draft.device.lastPhotoAtMs = now;
         draft.device.photoCount += 1;
         draft.device.usedBytes += persistedDiskBytes;
@@ -279,14 +276,7 @@ export function photoRouter(uploadDir: string, publicBaseUrl: string) {
           draft.device.id = deviceId;
           draft.device.name = `${deviceId} Connected`;
         }
-        draft.frames = draft.frames.map((f) => {
-          if (f.id !== (deviceId || draft.device.id)) return f;
-          return {
-            ...f,
-            lastSeenAtMs: now,
-            wifiStatus: transport === "wifi" ? "online" : f.wifiStatus,
-          };
-        });
+        // Upload activity is not evidence of a hardware heartbeat.
         draft.uploads.unshift({
           id: uploadId,
           filename: mqttBasename,
@@ -523,11 +513,8 @@ export function photoRouter(uploadDir: string, publicBaseUrl: string) {
             queued = d.queued;
             queueId = d.queueId;
             offlineReason = d.offlineReason;
-          } else if (!isDeliverySlotFree(deviceId)) {
-            deliveryMode = "queued_slot_busy";
-            enqueueUpload(deviceId, uploadId);
-            queued = true;
           } else {
+            supersedePending(mqttMacForUpload);
             let publicHost = "";
             try {
               publicHost = new URL(process.env.PUBLIC_MEDIA_BASE_URL || base).hostname;
@@ -539,11 +526,14 @@ export function photoRouter(uploadDir: string, publicBaseUrl: string) {
               await publishPlayImage(deviceId, imageUrl, publicHost || undefined);
               deliveredToFrame = true;
               deliveryMode = "vps_mqtt";
-              scheduleNextDelivery(deviceId);
+
             } catch (err) {
               console.error("[photo] MQTT play publish failed:", err);
               deliveryMode = "mqtt_publish_failed";
-              enqueueUpload(deviceId, uploadId);
+              const fallback = queueUploadForOfflineFrame(mqttMacForUpload, imageUrl, uploadId, verifyUserJwtBearer(req)?.userId, "mqtt_publish_failed");
+              queueId = fallback.queueId;
+              deliveryMode = fallback.deliveryMode;
+              offlineReason = "mqtt_publish_failed";
               queued = true;
             }
           }
@@ -554,9 +544,6 @@ export function photoRouter(uploadDir: string, publicBaseUrl: string) {
         if (!skipPlay && mqttMacForUpload && draft.slideshowsByBleMac?.[mqttMacForUpload]) {
           delete draft.slideshowsByBleMac[mqttMacForUpload];
         }
-        draft.device.connected = true;
-        draft.device.transport.wifi = transport === "wifi" || draft.device.transport.wifi;
-        draft.device.transport.bluetooth = transport === "bluetooth" || draft.device.transport.bluetooth;
         draft.device.lastPhotoAtMs = now;
         draft.device.photoCount += 1;
         draft.device.usedBytes += persistedDiskBytes;
@@ -564,14 +551,7 @@ export function photoRouter(uploadDir: string, publicBaseUrl: string) {
           draft.device.id = deviceId;
           draft.device.name = `${deviceId} Connected`;
         }
-        draft.frames = draft.frames.map((f) => {
-          if (f.id !== (deviceId || draft.device.id)) return f;
-          return {
-            ...f,
-            lastSeenAtMs: now,
-            wifiStatus: transport === "wifi" ? "online" : f.wifiStatus,
-          };
-        });
+        // Upload activity is not evidence of a hardware heartbeat.
         draft.uploads.unshift({
           id: uploadId,
           filename: mqttBasename,

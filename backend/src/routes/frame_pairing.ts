@@ -89,9 +89,8 @@ function frameStatusPayload(macRaw: string) {
   // otherwise make an offline frame appear `mqtt_connected`.
   var frameAlive = ageMs != null && ageMs >= 0 && ageMs < windows.timeout;
   var frameReachable = frameAlive;
-  // Only report "sleeping" when the frame is actually alive and inside its
-  // scheduled sleep window (never for a dead/offline frame).
-  var sleeping = frameAlive && isInSleepWindow(data, mac, paired);
+  // An enabled schedule explains a silent radio; fresh telemetry wins.
+  var sleeping = !(ageMs != null && ageMs >= 0 && ageMs < windows.online) && isInSleepWindow(data, mac, paired);
   var presence = classifyFramePresence(ageMs, sleeping, rec?.firmwareVersion ?? paired?.firmwareVersion);
   // App "online" means a FRESH heartbeat (online) or sleeping — an "idle"
   // frame (no heartbeat for 15-30 min) is treated as OFFLINE for the client so

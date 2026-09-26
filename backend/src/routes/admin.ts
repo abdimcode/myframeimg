@@ -188,12 +188,7 @@ adminRouter.delete("/admin/faqs/:id", (req, res) => {
 // Superadmin: Fleet overview
 adminRouter.get("/admin/fleet/overview", (_req, res) => {
   const data = db.read();
-  const frames = data.frames.map((f) => {
-    if (f.id === data.device.id && data.device.connected) {
-      return { ...f, wifiStatus: "online" as const, lastSeenAtMs: f.lastSeenAtMs ?? Date.now() };
-    }
-    return f;
-  });
+  const frames = data.frames;
   const now = Date.now();
   const online = frames.filter((f) => f.wifiStatus === "online").length;
   const offline = frames.filter((f) => f.wifiStatus === "offline").length;

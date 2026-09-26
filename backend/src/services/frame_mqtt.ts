@@ -1120,20 +1120,16 @@ export type FramePresence = "online" | "idle" | "sleeping" | "offline";
 /** Classify presence from last-seen age + optional scheduled sleep. */
 export function classifyFramePresence(ageMs: number | null | undefined, sleeping = false, version?: string): FramePresence {
   const windows = frameHeartbeatWindows(version);
-  // A frame that has not heartbeated within the grace window is offline,
-  // regardless of any scheduled sleep window.
-  if (ageMs == null || !Number.isFinite(ageMs) || ageMs < 0) return "offline";
-  if (ageMs >= windows.timeout) return "offline";
+  // Fresh hardware telemetry overrides the expected scheduled radio sleep.
+  if (ageMs != null && Number.isFinite(ageMs) && ageMs >= 0 && ageMs < windows.online) return "online";
   if (sleeping) return "sleeping";
-  if (ageMs < windows.online) return "online";
+  if (ageMs == null || !Number.isFinite(ageMs) || ageMs < 0 || ageMs >= windows.timeout) return "offline";
   return "idle";
 }
 
 /**
- * True when a device is CURRENTLY in its scheduled sleep window AND is still
- * alive (recent heartbeat), i.e. it powered down its radio for power saving
- * rather than being unexpectedly offline. Shared by the push gate so commands
- * to a sleeping frame are rejected with FRAME_ASLEEP instead of timing out.
+ * Expected scheduled sleep when the radio is silent. A fresh uplink overrides
+ * the schedule so commands, including cancellation, can be sent on wake.
  */
 export function isDeviceSleeping(macRaw: string): boolean {
   const mac = resolveMqttHardwareMac(macRaw) ?? normalizeMac(macRaw);
@@ -1150,8 +1146,7 @@ export function isDeviceSleeping(macRaw: string): boolean {
     );
   });
   const lastSeen = Math.max(rec?.lastSeen ?? 0, pairedFrame?.lastHeartbeatAtMs ?? pairedFrame?.lastSeenAtMs ?? 0);
-  const alive = lastSeen > 0 && now - lastSeen < frameHeartbeatWindows(rec?.firmwareVersion ?? pairedFrame?.firmwareVersion).timeout;
-  if (!alive) return false;
+  if (lastSeen > 0 && now - lastSeen >= 0 && now - lastSeen < frameHeartbeatWindows(rec?.firmwareVersion ?? pairedFrame?.firmwareVersion).online) return false;
 
   if (pairedFrame?.sleepConfig?.enabled === false) return false;
   // Active wifi_sleep config first.
@@ -1548,8 +1543,8 @@ export function publishFrameCommand(
       : localToUtcHHMM(formatTimeHHMM(String(data.endTime ?? data.endtime ?? "")), offset);
     outData = {
       mode: Number(data.mode ?? 0),
-      beginTime,
-      endTime,
+      beginTime: Number(data.mode ?? 0) === 0 ? "" : beginTime,
+      endTime: Number(data.mode ?? 0) === 0 ? "" : endTime,
     };
   } else if (action === "strategy_bin") {
     // Client sends LOCAL HH:mm begintime/endtime + timezoneOffsetMinutes.

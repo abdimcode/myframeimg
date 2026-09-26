@@ -92,10 +92,8 @@ deviceRouter.post("/device/send", async (req, res) => {
     await publishPlayImage(deviceId, imageUrl, publicHost || undefined);
     const now = Date.now();
     db.mutate((draft) => {
-      draft.device.connected = true;
       draft.device.id = deviceId;
       draft.device.lastPhotoAtMs = now;
-      draft.frames = draft.frames.map((f) => (f.id === deviceId ? { ...f, lastSeenAtMs: now } : f));
       draft.auditLog.unshift({
         id: `audit_${now}_${Math.random().toString(16).slice(2, 8)}`,
         actor: "api_device_send",

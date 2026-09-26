@@ -12,6 +12,8 @@ import { syncSlideshowDelete } from "../services/album_delete_sync";
 import { visibleFramesForUser, frameDisplayName } from "../services/account_sync_state";
 import { isFrameOwner } from "../services/frame_user_roles";
 
+import { classifyFramePresence, isDeviceSleeping } from "../services/frame_mqtt";
+
 export const userPortalRouter = Router();
 userPortalRouter.use(express.json({ limit: "256kb" }));
 
@@ -115,8 +117,8 @@ userPortalRouter.get("/user/dashboard", (req: Request, res: Response) => {
 
   let onlineDevices = 0;
   const deviceRows = frames.map((f) => {
-    const HEARTBEAT_TIMEOUT = 30 * 60 * 1000; // align with MQTT grace (3× ~10min heart)
-    const online = f.wifiStatus !== "never_provisioned" && f.lastSeenAtMs != null && (Date.now() - f.lastSeenAtMs) < HEARTBEAT_TIMEOUT;
+    const seen = f.lastHeartbeatAtMs ?? f.lastSeenAtMs ?? 0;
+    const online = f.wifiStatus !== "never_provisioned" && classifyFramePresence(Date.now() - seen, false, f.firmwareVersion) === "online";
     if (online) onlineDevices += 1;
     const macKey = normalizeBleKey(f.bleMac);
     const slideshow = data.slideshowsByBleMac?.[macKey];
@@ -126,6 +128,7 @@ userPortalRouter.get("/user/dashboard", (req: Request, res: Response) => {
       name: frameDisplayName(f) || null,
       wifiStatus: f.wifiStatus,
       online,
+      sleeping: isDeviceSleeping(f.stationMac || f.id),
       lastSeenAtMs: f.lastSeenAtMs,
       lastPhotoAtMs: lastPhotoAtMsByFrame.get(f.id) ?? null,
       firmwareVersion: f.firmwareVersion,

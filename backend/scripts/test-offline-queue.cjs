@@ -172,23 +172,23 @@ function makeStale(mac, idx) {
     assert.equal((await status(MESSI, pl._id)).status, 'completed');
     assert.equal(offline.getOfflineItem(MESSI, pl._id).status, 'completed');
 
-    // 8. Sequential drain: two queued singles dispatch one at a time, oldest first.
-    makeStale(MESSI, 1);
-    const a = offline.enqueueOfflineItem({ mac: MESSI, userId: 'owner', type: 'single', payload: { imgid: 'x', imgurl: 'http://47.76.164.162/frame-media/x.bin' } });
-    const b = offline.enqueueOfflineItem({ mac: MESSI, userId: 'owner', type: 'single', payload: { imgid: 'y', imgurl: 'http://47.76.164.162/frame-media/y.bin' } });
-    const mark = messages.length;
-    uplink(MESSI, { action: 'heart', data: {} }); await tick(); await tick();
-    assert.equal(messages.length, mark + 1); assert.equal(messages[mark].msgid, a._id);
-    assert.equal((await status(MESSI, b._id)).status, 'waiting_offline');
-    uplink(MESSI, { action: 'play_ack', msgid: a._id, result: 113 }); await tick(); await tick();
-    assert.equal(messages.length, mark + 2); assert.equal(messages[mark + 1].msgid, b._id);
-    uplink(MESSI, { action: 'play_ack', msgid: b._id, result: 113 }); await tick();
-    assert.equal(offline.listOfflineQueue(MESSI).length, 0);
+    // Latest intent wins across single photos and playlists; no older replay.
+    makeStale(MESSI,1);
+    const a=offline.enqueueOfflineItem({mac:MESSI,type:'single',payload:{imgid:'A',imgurl:'http://47.76.164.162/A.bin'}});
+    const b=offline.enqueueOfflineItem({mac:MESSI,type:'playlist',payload:{imageIds:['b1','b2']}});
+    const c=offline.enqueueOfflineItem({mac:MESSI,type:'single',payload:{imgid:'C',imgurl:'http://47.76.164.162/C.bin'}});
+    assert.equal((await status(MESSI,a._id)).status,'superseded');
+    assert.equal((await status(MESSI,b._id)).status,'superseded');
+    const mark=messages.length;
+    uplink(MESSI,{action:'heart',data:{}});await tick();await tick();
+    assert.equal(messages.length,mark+1);assert.equal(messages[mark].msgid,c._id);
+    uplink(MESSI,{action:'play_ack',msgid:c._id,result:113});await tick();await tick();
+    assert.equal(messages.length,mark+1);assert.equal(offline.listOfflineQueue(MESSI).length,0);
 
     // 9. Unknown msgid still 404s.
     assert.equal((await call('GET', `/api/v1/frames/${MESSI}/push-status?msgid=nope`)).status, 404);
 
-    console.log('PASS: offline push accepted+queued (no 409), idempotent, isolated per frame, heartbeat dispatch with same msgid on /myframe/{mac}, ack completion + notifications, cancel, playlist strategy_bin replay, sequential drain');
+    console.log('PASS: offline push accepted+queued (no 409), idempotent, isolated per frame, heartbeat dispatch with same msgid on /myframe/{mac}, ack completion + notifications, cancel, playlist strategy_bin replay, latest-only drain across photo/playlist');
   } finally {
     server.close();
     pushQueueRef.resetPushQueue();

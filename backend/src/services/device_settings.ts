@@ -1,5 +1,5 @@
 import { db, MyframeDb } from '../db/store';
-import { normalizeMac, classifyFramePresence, publishFrameCommand, publishMqttConfig, isMqttConnected } from './frame_mqtt';
+import { normalizeMac, classifyFramePresence, isDeviceSleeping, publishFrameCommand, publishMqttConfig, isMqttConnected } from './frame_mqtt';
 type Frame = MyframeDb['frames'][number];
 export function settingsFrame(raw: string, rows = db.read().frames): Frame | undefined {
   const mac = normalizeMac(raw);
@@ -14,13 +14,13 @@ export function deviceSettings(frame: Frame) {
   const playback = frame.playbackConfig;
   const age = Date.now() - (frame.lastHeartbeatAtMs ?? frame.lastSeenAtMs ?? 0);
   return {
-    mac, online: classifyFramePresence(age, false, frame.firmwareVersion) === 'online',
+    mac, sleeping: isDeviceSleeping(mac), online: classifyFramePresence(age, false, frame.firmwareVersion) === 'online',
     playbackProfile: { intervalMinutes: playback?.intervalMinutes ?? 10,
       strategy: playback?.mode === 'random' ? 2 : 1, idle: playback?.idle ?? 1,
       durationHours: playback?.durationHours ?? 6 },
-    sleepMode: { enabled: sleep?.enabled === true, mode: sleep?.enabled ? (ws?.mode || 2) : 0,
+    sleepMode: { pendingDisable: sleep?.enabled === false && !!frame.settingsPending?.sleep, enabled: sleep?.enabled === true, mode: sleep?.enabled ? (ws?.mode || 2) : 0,
       beginTime: sleep?.startTime ?? '23:00', endTime: sleep?.endTime ?? '07:00',
-      timezoneOffsetMinutes: sleep?.timezoneOffsetMinutes || frame.timezoneOffsetMinutes || 0 },
+      timezoneOffsetMinutes: sleep?.timezoneOffsetMinutes ?? frame.timezoneOffsetMinutes ?? 0 },
     ota: { autoCheck: frame.autoUpdateEnabled === true },
     pending: !!(frame.settingsPending?.sleep || frame.settingsPending?.playback),
   };
@@ -55,4 +55,19 @@ export async function flushDeviceSettings(raw: string): Promise<void> {
       });
     }
   } finally { inflight.delete(mac); }
+}
+
+/** Apply the onboarding default once; never overwrite explicitly saved settings. */
+export function initializeDefaultSleep(draft: MyframeDb, frame: Frame, offset: number): boolean {
+  if (frame.defaultSleepInitializedAtMs || frame.settingsRevision || frame.sleepConfig?.enabled ||
+      (frame.sleepConfig && (frame.sleepConfig.startTime !== '23:00' || frame.sleepConfig.endTime !== '07:00'))) return false;
+  frame.defaultSleepInitializedAtMs = Date.now();
+  frame.timezoneOffsetMinutes = offset;
+  frame.sleepConfig = {enabled:true,startTime:'23:00',endTime:'07:00',timezoneOffsetMinutes:offset};
+  const mac = normalizeMac(frame.stationMac || frame.id);
+  draft.wifiSleepByBleMac = draft.wifiSleepByBleMac || {};
+  draft.wifiSleepByBleMac[mac] = {mode:2,begintime:'23:00',endtime:'07:00',timezoneOffsetMinutes:offset,updatedAtMs:Date.now()};
+  frame.settingsRevision = (frame.settingsRevision ?? 0) + 1;
+  frame.settingsPending = {...frame.settingsPending,sleep:frame.settingsRevision};
+  return true;
 }

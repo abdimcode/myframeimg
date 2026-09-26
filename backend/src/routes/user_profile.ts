@@ -1,4 +1,5 @@
-import { classifyFramePresence } from "../services/frame_mqtt";
+import { initializeDefaultSleep, flushDeviceSettings } from "../services/device_settings";
+import { classifyFramePresence, isDeviceSleeping } from "../services/frame_mqtt";
 import { countryForRequest } from "../services/geo_lookup";
 import { normalizeReportedCountry, targetWifiCountry } from "../services/wifi_country";
 import express from "express";
@@ -135,6 +136,7 @@ userProfileRouter.get("/v1/user/profile", (req: Request, res: Response) => {
       is_owner: isFrameOwner(data, f.id, account.id),
       user_role: isFrameOwner(data, f.id, account.id) ? "OWNER" : "MEMBER",
       wifi_ssid: f.wifiSsid,
+      sleeping: isDeviceSleeping(f.stationMac || f.id),
       online: classifyFramePresence(Date.now() - (f.lastHeartbeatAtMs ?? f.lastSeenAtMs ?? 0), false, f.firmwareVersion) === "online",
       last_seen_at: f.lastSeenAtMs,
       battery: f.battery ?? null,
@@ -285,7 +287,7 @@ userProfileRouter.post("/v1/user/avatar", avatarUpload.single("avatar"), (req: R
 
 
 /** POST /api/v1/user/frames/bind — claim/bind a frame MAC to this account (bumps sync_version). */
-userProfileRouter.post("/v1/user/frames/bind", (req: Request, res: Response) => {
+userProfileRouter.post("/v1/user/frames/bind", async (req: Request, res: Response) => {
   const user = authed(req);
   const bleMacRaw = String(req.body?.ble_mac ?? req.body?.mac ?? req.body?.frame_id ?? "").trim();
   const norm = normalizeMac(bleMacRaw);
@@ -303,6 +305,10 @@ userProfileRouter.post("/v1/user/frames/bind", (req: Request, res: Response) => 
   const validTimezoneOffset = Number.isFinite(timezoneOffsetIn) && timezoneOffsetIn >= -840 && timezoneOffsetIn <= 840
     ? timezoneOffsetIn
     : null;
+  const autoEnableSleep = req.body?.autoEnableSleep === true;
+  if (autoEnableSleep && (validTimezoneOffset == null || !Number.isInteger(validTimezoneOffset) || !frameNameIn)) {
+    res.status(422).json({ok:false,error:'sleep_default_requires_name_and_timezone'}); return;
+  }
   // ESP32 Wi-Fi country the app pushed over BLE (`wifi_set_country_code`).
   const wifiCountryIn = normalizeReportedCountry(req.body?.wifi_country_code ?? req.body?.wifiCountryCode);
   let frameId = "";
@@ -359,6 +365,7 @@ userProfileRouter.post("/v1/user/frames/bind", (req: Request, res: Response) => 
     if (validTimezoneOffset != null) existing!.timezoneOffsetMinutes = validTimezoneOffset;
     if (wifiCountryIn) existing!.wifiCountryProvisioned = wifiCountryIn;
 
+    if (autoEnableSleep) initializeDefaultSleep(draft, existing!, validTimezoneOffset!);
     frameId = existing!.id;
     bleMacOut = normalizeMac(existing!.bleMac || norm);
     const u = draft.users.find((x) => x.id === user.userId);
@@ -391,6 +398,10 @@ userProfileRouter.post("/v1/user/frames/bind", (req: Request, res: Response) => 
   // frame's Wi-Fi regulatory country sync over MQTT. Non-blocking; country only.
   void recordFrameGeoCountry(req, frameId);
 
+  if (autoEnableSleep) {
+    try { await flushDeviceSettings(frameId); }
+    catch (_) { console.warn('[device-settings] initial sleep queued', frameId); }
+  }
   const account = db.read().users.find((u) => u.id === user.userId);
   res.json({
     ok: true,
@@ -638,6 +649,7 @@ userProfileRouter.get("/v1/user/frames", (req: Request, res: Response) => {
       ble_mac: normalizeMac(f.bleMac || f.stationMac || f.id),
       station_mac: f.stationMac ? normalizeMac(f.stationMac) : null,
       wifi_ssid: f.wifiSsid,
+      sleeping: isDeviceSleeping(f.stationMac || f.id),
       online: classifyFramePresence(Date.now() - (f.lastHeartbeatAtMs ?? f.lastSeenAtMs ?? 0), false, f.firmwareVersion) === "online",
       firmware_version: f.firmwareVersion,
       last_seen_at: f.lastSeenAtMs,

@@ -129,6 +129,18 @@ function sameTarget(a: OfflineQueueItem, input: EnqueueInput): boolean {
  * target (e.g. the upload route AND the client's follow-up `/push` call both
  * try to queue the same image) — the existing item is returned.
  */
+export function supersedePending(macRaw: string, exceptId?: string): void {
+  const mac = macKey(macRaw);
+  db.mutate(draft => {
+    for (const item of ensureQueue(draft)[mac] ?? []) {
+      if (item.status === "queued" && item._id !== exceptId) {
+        item.status = "superseded";
+        item.updatedAtMs = Date.now();
+      }
+    }
+  });
+}
+
 export function enqueueOfflineItem(input: EnqueueInput): OfflineQueueItem {
   const mac = macKey(input.mac);
   const now = Date.now();
@@ -152,6 +164,9 @@ export function enqueueOfflineItem(input: EnqueueInput): OfflineQueueItem {
       updatedAtMs: now,
       attempts: 0,
     };
+    for (const older of list) {
+      if (older.status === "queued") { older.status = "superseded"; older.updatedAtMs = now; }
+    }
     list.push(item);
     // Bound growth: drop the oldest terminal items first.
     if (list.length > MAX_ITEMS_PER_MAC) {
@@ -168,7 +183,7 @@ export function enqueueOfflineItem(input: EnqueueInput): OfflineQueueItem {
 }
 
 export function isTerminal(status: OfflineQueueItem["status"]): boolean {
-  return status === "completed" || status === "failed" || status === "cancelled";
+  return status === "superseded" || status === "completed" || status === "failed" || status === "cancelled";
 }
 
 export function getOfflineItem(macRaw: string, id: string): OfflineQueueItem | null {
@@ -210,6 +225,7 @@ function updateItem(mac: string, id: string, patch: (item: OfflineQueueItem) => 
     const item = list.find((i) => i._id === id);
     if (!item) return;
     patch(item);
+    if (item.status === "queued" && list.indexOf(item) < list.length - 1) item.status = "superseded";
     item.updatedAtMs = Date.now();
     out = item;
   });
@@ -223,7 +239,7 @@ function updateItem(mac: string, id: string, patch: (item: OfflineQueueItem) => 
 const inflight = new Set<string>();
 
 /**
- * Hand the oldest queued item for a MAC to the push queue if the frame is ready
+ * Hand the newest queued item for a MAC to the push queue if the frame is ready
  * and nothing from this queue is currently in flight. Called on every
  * heart/login uplink and by the sweeper. Returns the dispatched item or null.
  */
@@ -238,8 +254,9 @@ export async function flushOfflineQueue(macRaw: string): Promise<OfflineQueueIte
     if (items.some((i) => i.status === "dispatching")) return null;
     const readiness = dispatchReadiness(mac);
     if (!readiness.ready) return null;
-    const next = items.find((i) => i.status === "queued");
+    const next = items.slice().reverse().find((i) => i.status === "queued");
     if (!next) return null;
+    supersedePending(mac, next._id);
     return await dispatchItem(next);
   } finally {
     inflight.delete(mac);
