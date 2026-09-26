@@ -9,14 +9,10 @@ import path from "path";
 import { db } from "../db/store";
 import { requirePairingToken, uploadRateLimit } from "../middleware/security";
 import { verifyUserJwtBearer, platformFromRequest } from "../services/app_user_jwt";
-import { frameMediaOrigin, publishPlayImage, publishStrategyCommand, resolveFrameMediaUrl, resolveMqttHardwareMac } from "../services/frame_mqtt";
+import { frameMediaOrigin, publishStrategyCommand, resolveFrameMediaUrl, resolveMqttHardwareMac } from "../services/frame_mqtt";
 import { sendLocalizedPushToFrameSubscribers } from "../services/firebase_admin";
-import {
-  enqueueUpload,
-  initQueue,
-  isDeliverySlotFree,
-  scheduleNextDelivery,
-} from "../services/photo_queue";
+import { initQueue } from "../services/photo_queue";
+import { enqueuePushAndDispatch } from "../services/push_queue";
 import {
   assertXt13e6Bin,
   isProbablyMyfmBuffer,
@@ -217,6 +213,8 @@ export function photoRouter(uploadDir: string, publicBaseUrl: string) {
       let deliveryMode = "stored_only";
       let queued = false;
       let queueId: string | null = null;
+      /** Push-job status the client can seed its banner with (dispatched | waiting_offline). */
+      let pushStatus: string | null = null;
       let frameOnline: boolean | null = null;
       let offlineReason: string | null = null;
       let mqttMacForUpload: string | null = null;
@@ -237,29 +235,30 @@ export function photoRouter(uploadDir: string, publicBaseUrl: string) {
             deliveryMode = d.deliveryMode;
             queued = d.queued;
             queueId = d.queueId;
+            pushStatus = "waiting_offline";
             offlineReason = d.offlineReason;
           } else {
             supersedePending(mqttMacForUpload);
-            let publicHost = "";
+            // Online: dispatch NOW through the tracked push queue (latest wins —
+            // an earlier single still awaiting play_ack is superseded, never
+            // waited on). One publish, one msgid the client polls; the app must
+            // not call /push again for this image.
             try {
-              publicHost = new URL(process.env.PUBLIC_MEDIA_BASE_URL || base).hostname;
-            } catch {
-              /* ignore */
-            }
-            try {
-              // Single photo cast: direct publishPlayImage (1037346b contract).
-              await publishPlayImage(deviceId, imageUrl, publicHost || undefined);
+              const job = await enqueuePushAndDispatch(mqttMacForUpload, "single", [{ imgid: uploadId, imgurl: imageUrl }]);
+              queueId = job.msgid;
+              pushStatus = job.status;
+              if (job.status === "failed") throw new Error(job.error || "push_dispatch_failed");
               deliveredToFrame = true;
               deliveryMode = "vps_mqtt";
-
             } catch (err) {
-              console.error("[photo] MQTT play publish failed:", err);
-              deliveryMode = "mqtt_publish_failed";
-              const fallback = queueUploadForOfflineFrame(mqttMacForUpload, imageUrl, uploadId, verifyUserJwtBearer(req)?.userId, "mqtt_publish_failed");
-              queueId = fallback.queueId;
-              deliveryMode = fallback.deliveryMode;
-              offlineReason = "mqtt_publish_failed";
+              console.error("[photo] MQTT play dispatch failed — queuing for next heartbeat:", err);
+              const d = queueUploadForOfflineFrame(mqttMacForUpload, imageUrl, uploadId, verifyUserJwtBearer(req)?.userId, "mqtt_publish_failed");
+              deliveredToFrame = false;
+              deliveryMode = d.deliveryMode;
               queued = true;
+              queueId = d.queueId;
+              pushStatus = "waiting_offline";
+              offlineReason = "mqtt_publish_failed";
             }
           }
         }
@@ -369,8 +368,10 @@ export function photoRouter(uploadDir: string, publicBaseUrl: string) {
         delivery_mode: deliveryMode,
         queued: queued,
         /** Offline queue: poll push-status with this msgid (`waiting_offline` until the frame wakes). */
-        queue_id: queueId,
+        queue_id: queued ? queueId : null,
+        /** Tracked push-job id (online dispatch AND offline queue) — poll push-status with it. */
         msgid: queueId ?? undefined,
+        push_status: pushStatus,
         frame_online: frameOnline,
         offline_reason: offlineReason,
         image_url: imageUrl,
@@ -492,6 +493,8 @@ export function photoRouter(uploadDir: string, publicBaseUrl: string) {
       let deliveryMode = "stored_only";
       let queued = false;
       let queueId: string | null = null;
+      /** Push-job status the client can seed its banner with (dispatched | waiting_offline). */
+      let pushStatus: string | null = null;
       let frameOnline: boolean | null = null;
       let offlineReason: string | null = null;
       let mqttMacForUpload: string | null = null;
@@ -512,29 +515,30 @@ export function photoRouter(uploadDir: string, publicBaseUrl: string) {
             deliveryMode = d.deliveryMode;
             queued = d.queued;
             queueId = d.queueId;
+            pushStatus = "waiting_offline";
             offlineReason = d.offlineReason;
           } else {
             supersedePending(mqttMacForUpload);
-            let publicHost = "";
+            // Online: dispatch NOW through the tracked push queue (latest wins —
+            // an earlier single still awaiting play_ack is superseded, never
+            // waited on). One publish, one msgid the client polls; the app must
+            // not call /push again for this image.
             try {
-              publicHost = new URL(process.env.PUBLIC_MEDIA_BASE_URL || base).hostname;
-            } catch {
-              /* ignore */
-            }
-            try {
-              // Single photo cast: direct publishPlayImage (1037346b contract).
-              await publishPlayImage(deviceId, imageUrl, publicHost || undefined);
+              const job = await enqueuePushAndDispatch(mqttMacForUpload, "single", [{ imgid: uploadId, imgurl: imageUrl }]);
+              queueId = job.msgid;
+              pushStatus = job.status;
+              if (job.status === "failed") throw new Error(job.error || "push_dispatch_failed");
               deliveredToFrame = true;
               deliveryMode = "vps_mqtt";
-
             } catch (err) {
-              console.error("[photo] MQTT play publish failed:", err);
-              deliveryMode = "mqtt_publish_failed";
-              const fallback = queueUploadForOfflineFrame(mqttMacForUpload, imageUrl, uploadId, verifyUserJwtBearer(req)?.userId, "mqtt_publish_failed");
-              queueId = fallback.queueId;
-              deliveryMode = fallback.deliveryMode;
-              offlineReason = "mqtt_publish_failed";
+              console.error("[photo] MQTT play dispatch failed — queuing for next heartbeat:", err);
+              const d = queueUploadForOfflineFrame(mqttMacForUpload, imageUrl, uploadId, verifyUserJwtBearer(req)?.userId, "mqtt_publish_failed");
+              deliveredToFrame = false;
+              deliveryMode = d.deliveryMode;
               queued = true;
+              queueId = d.queueId;
+              pushStatus = "waiting_offline";
+              offlineReason = "mqtt_publish_failed";
             }
           }
         }
@@ -637,8 +641,10 @@ export function photoRouter(uploadDir: string, publicBaseUrl: string) {
         delivered_to_frame: deliveredToFrame,
         delivery_mode: deliveryMode,
         queued: queued,
-        queue_id: queueId,
+        queue_id: queued ? queueId : null,
+        /** Tracked push-job id (online dispatch AND offline queue) — poll push-status with it. */
         msgid: queueId ?? undefined,
+        push_status: pushStatus,
         frame_online: frameOnline,
         offline_reason: offlineReason,
         image_url: imageUrl,

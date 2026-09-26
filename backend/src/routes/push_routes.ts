@@ -7,7 +7,7 @@ import {
   normalizeMac,
   resolveMqttHardwareMac,
 } from "../services/frame_mqtt";
-import { enqueuePush, getPushJob, pushStatus } from "../services/push_queue";
+import { enqueuePushAndDispatch, getPushJob, pushStatus } from "../services/push_queue";
 import {
   cancelOfflineItem,
   dispatchReadiness,
@@ -68,7 +68,7 @@ function resolvePhotoIds(photoIds: unknown): Array<{ imgid: string; imgurl: stri
   return out;
 }
 
-pushRouter.post("/v1/frames/:mac/push", requirePairingToken, (req: Request, res: Response) => {
+pushRouter.post("/v1/frames/:mac/push", requirePairingToken, async (req: Request, res: Response) => {
   const mac = toMac(String(req.params.mac ?? ""));
   if (mac.length !== 12) {
     res.status(400).json({ ok: false, error: "invalid_mac" });
@@ -123,8 +123,10 @@ pushRouter.post("/v1/frames/:mac/push", requirePairingToken, (req: Request, res:
   }
 
   supersedePending(mac);
-  const job = enqueuePush(mac, type, imgs);
-  res.json({ ok: true, success: true, msgid: job.msgid, status: job.status, progress: job.progress, queued: false, frame_online: true });
+  // Online: dispatch now (latest single wins over any in-flight job) and
+  // report the post-dispatch status so the client never seeds "Queued".
+  const job = await enqueuePushAndDispatch(mac, type, imgs);
+  res.json({ ok: true, success: true, msgid: job.msgid, status: job.status, progress: job.progress, queued: false, frame_online: true, message: "Dispatched directly to online frame" });
 });
 
 // Status polling is intentionally non-blocking-auth: msgid is a per-push
@@ -163,7 +165,7 @@ pushRouter.get("/v1/frames/:mac/push-status", (req: Request, res: Response) => {
   if (!job) {
     if (item) {
       // Dispatching item whose job is not visible yet (or a failed item).
-      const status = item.status === "failed" ? "failed" : item.status === "completed" ? "completed" : "dispatched";
+      const status = item.status === "failed" ? "failed" : item.status === "completed" ? "completed" : item.status === "superseded" ? "superseded" : "dispatched";
       res.json({
         ok: true,
         msgid: item._id,

@@ -93,7 +93,9 @@ export type PushJobStatus =
   | "downloaded"
   | "completed"
   | "timeout_failed"
-  | "failed";
+  | "failed"
+  /** Replaced by a newer push for the same frame before it finished (latest wins). */
+  | "superseded";
 
 export type PushJob = {
   msgid: string;
@@ -120,7 +122,7 @@ export type PushJob = {
  * are handed to the push queue (`dispatching`, same msgid = `_id`), and end in
  * `completed` / `failed` from the hardware ACK state machine.
  */
-export type OfflineQueueStatus = "superseded" | "queued" | "dispatching" | "completed" | "failed" | "cancelled";
+export type OfflineQueueStatus = "queued" | "dispatching" | "completed" | "failed" | "cancelled" | "superseded";
 
 export type OfflineQueueItem = {
   /** Also used as the push-job msgid once dispatched, so clients poll one id. */

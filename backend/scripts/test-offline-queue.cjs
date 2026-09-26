@@ -172,23 +172,53 @@ function makeStale(mac, idx) {
     assert.equal((await status(MESSI, pl._id)).status, 'completed');
     assert.equal(offline.getOfflineItem(MESSI, pl._id).status, 'completed');
 
-    // Latest intent wins across single photos and playlists; no older replay.
-    makeStale(MESSI,1);
-    const a=offline.enqueueOfflineItem({mac:MESSI,type:'single',payload:{imgid:'A',imgurl:'http://47.76.164.162/A.bin'}});
-    const b=offline.enqueueOfflineItem({mac:MESSI,type:'playlist',payload:{imageIds:['b1','b2']}});
-    const c=offline.enqueueOfflineItem({mac:MESSI,type:'single',payload:{imgid:'C',imgurl:'http://47.76.164.162/C.bin'}});
-    assert.equal((await status(MESSI,a._id)).status,'superseded');
-    assert.equal((await status(MESSI,b._id)).status,'superseded');
-    const mark=messages.length;
-    uplink(MESSI,{action:'heart',data:{}});await tick();await tick();
-    assert.equal(messages.length,mark+1);assert.equal(messages[mark].msgid,c._id);
-    uplink(MESSI,{action:'play_ack',msgid:c._id,result:113});await tick();await tick();
-    assert.equal(messages.length,mark+1);assert.equal(offline.listOfflineQueue(MESSI).length,0);
+    // 8. Latest wins while offline: A, B, C queued → on wake ONLY C is cast; A/B superseded.
+    makeStale(MESSI, 1);
+    const a = offline.enqueueOfflineItem({ mac: MESSI, userId: 'owner', type: 'single', payload: { imgid: 'x', imgurl: 'http://47.76.164.162/frame-media/x.bin' } });
+    const b = offline.enqueueOfflineItem({ mac: MESSI, userId: 'owner', type: 'single', payload: { imgid: 'y', imgurl: 'http://47.76.164.162/frame-media/y.bin' } });
+    assert.equal(offline.getOfflineItem(MESSI, a._id).status, 'superseded', 'B supersedes A at enqueue');
+    assert.equal((await status(MESSI, a._id)).status, 'superseded');
+    const c = offline.enqueueOfflineItem({ mac: MESSI, userId: 'owner', type: 'single', payload: { imgid: 'z', imgurl: 'http://47.76.164.162/frame-media/z.bin' } });
+    assert.equal(offline.getOfflineItem(MESSI, b._id).status, 'superseded');
+    assert.equal(offline.listOfflineQueue(MESSI).length, 1, 'only C pending');
+    const mark = messages.length;
+    uplink(MESSI, { action: 'heart', data: {} }); await tick(); await tick();
+    assert.equal(messages.length, mark + 1, 'exactly one play on wake');
+    assert.equal(messages[mark].msgid, c._id);
+    assert.equal(messages[mark].data.imgs[0].imgurl, 'http://47.76.164.162/frame-media/z.bin');
+    uplink(MESSI, { action: 'play_ack', msgid: c._id, result: 113 }); await tick(); await tick();
+    assert.equal(messages.length, mark + 1, 'A and B never dispatched');
+    assert.equal(offline.listOfflineQueue(MESSI).length, 0);
 
-    // 9. Unknown msgid still 404s.
+    // 8b. Playlist + single queued offline: newest overall wins on wake, the other is superseded.
+    makeStale(MESSI, 1);
+    const pl2 = offline.enqueueOfflineItem({ mac: MESSI, userId: 'owner', type: 'playlist', payload: { imageIds: ['p.bin', 'q.bin'], intervalMinutes: 5, strategy: 1, idle: 1 } });
+    await new Promise(r => setTimeout(r, 5));
+    const sn = offline.enqueueOfflineItem({ mac: MESSI, userId: 'owner', type: 'single', payload: { imgid: 'w', imgurl: 'http://47.76.164.162/frame-media/w.bin' } });
+    assert.equal(offline.getOfflineItem(MESSI, pl2._id).status, 'superseded', 'newer intent supersedes across types at enqueue');
+    const mark2 = messages.length;
+    uplink(MESSI, { action: 'heart', data: {} }); await tick(); await tick();
+    assert.equal(messages.length, mark2 + 1);
+    assert.equal(messages[mark2].msgid, sn._id, 'newest (single) dispatched');
+    assert.equal(offline.getOfflineItem(MESSI, pl2._id).status, 'superseded', 'older playlist superseded on wake');
+    uplink(MESSI, { action: 'play_ack', msgid: sn._id, result: 113 }); await tick();
+
+    // 9. Online latest-wins: a second single while the first awaits play_ack goes out immediately.
+    const j1 = await call('POST', `/api/v1/frames/${MESSI}/push`, { type: 'single', imgs: [{ imgid: 'o1', imgurl: 'http://47.76.164.162/frame-media/o1.bin' }] });
+    assert.equal(j1.data.status, 'dispatched', 'push route reports post-dispatch status, not queued');
+    assert.equal(j1.data.queued, false);
+    const mark3 = messages.length;
+    const j2 = await call('POST', `/api/v1/frames/${MESSI}/push`, { type: 'single', imgs: [{ imgid: 'o2', imgurl: 'http://47.76.164.162/frame-media/o2.bin' }] });
+    assert.equal(j2.data.status, 'dispatched', 'second single dispatched immediately');
+    assert.equal(messages.length, mark3 + 1); assert.equal(messages[mark3].msgid, j2.data.msgid);
+    assert.equal((await status(MESSI, j1.data.msgid)).status, 'superseded', 'first job superseded');
+    uplink(MESSI, { action: 'play_ack', msgid: j2.data.msgid, result: 113 }); await tick();
+    assert.equal((await status(MESSI, j2.data.msgid)).status, 'completed');
+
+    // 10. Unknown msgid still 404s.
     assert.equal((await call('GET', `/api/v1/frames/${MESSI}/push-status?msgid=nope`)).status, 404);
 
-    console.log('PASS: offline push accepted+queued (no 409), idempotent, isolated per frame, heartbeat dispatch with same msgid on /myframe/{mac}, ack completion + notifications, cancel, playlist strategy_bin replay, latest-only drain across photo/playlist');
+    console.log('PASS: offline push accepted+queued (no 409), idempotent, isolated per frame, heartbeat dispatch with same msgid on /myframe/{mac}, ack completion + notifications, cancel, playlist strategy_bin replay, latest-only drain (A/B superseded, C cast), newest-type-wins on wake, online latest-wins without waiting');
   } finally {
     server.close();
     pushQueueRef.resetPushQueue();
